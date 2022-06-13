@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <optional>
 
 #include "storm/storage/SparseMatrix.h"
 #include "storm/utility/macros.h"
