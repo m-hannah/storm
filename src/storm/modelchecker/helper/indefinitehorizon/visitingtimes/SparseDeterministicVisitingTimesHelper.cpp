@@ -6,6 +6,8 @@
 #include "storm/environment/solver/TopologicalSolverEnvironment.h"
 #include "storm/solver/LinearEquationSolver.h"
 
+#include "storm/modelchecker/prctl/helper/BaierUpperRewardBoundsComputer.h"
+
 #include "storm/utility/ProgressMeasurement.h"
 #include "storm/utility/SignalHandler.h"
 #include "storm/utility/constants.h"
@@ -13,6 +15,7 @@
 #include "storm/utility/vector.h"
 
 #include "storm/exceptions/UnmetRequirementException.h"
+#include "storm/exceptions/NotSupportedException.h"
 
 namespace storm {
 namespace modelchecker {
@@ -178,6 +181,64 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::createDecomposition(Envi
     }
 }
 
+template<>
+void SparseDeterministicVisitingTimesHelper<storm::RationalFunction>::createUpperBounds() const {
+    STORM_LOG_THROW(false, storm::exceptions::NotSupportedException,
+                    "Computing upper bounds for expected visiting times over rational functions is not supported.");
+}
+
+template<typename ValueType>
+void SparseDeterministicVisitingTimesHelper<ValueType>::createUpperBounds() const {
+    // compute vector that contains upperBound for each non-BSCC state
+
+    storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowGroupCount(), false);
+    auto isLeavingTransition = [&sccAsBitVector](auto const& e) { return !sccAsBitVector.get(e.getColumn()); };
+    auto isExitState = [this, &isLeavingTransition](uint64_t state) {
+        auto row = this->_transitionMatrix.getRow(state);
+        return std::any_of(row.begin(), row.end(), isLeavingTransition);
+    };
+
+    storm::storage::BitVector nonBsccStates = storm::storage::BitVector(_transitionMatrix.getRowGroupCount(), false);
+
+    std::vector<uint64_t> stateToScc(_transitionMatrix.getRowGroupCount());
+
+    uint64_t sccIndex = 0;
+    auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
+    for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
+        auto const& scc = *sccIt;
+
+        // Mark the states which do not belong to a BSCC.
+        sccAsBitVector.set(scc.begin(), scc.end(), true);
+        if (std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)) {
+            // This is not a BSCC
+            nonBsccStates = nonBsccStates | sccAsBitVector;
+        }
+
+        // Save the SCC to which the state belongs.
+        for (auto const& state : scc) {
+            stateToScc[state] = sccIndex;
+        }
+        ++sccIndex;
+    }
+
+    // Compute the one-step probabilities that lead to BSCC states.
+    std::vector<ValueType> probabilitiesToBottomStates = _transitionMatrix.getConstrainedRowGroupSumVector(nonBsccStates, ~nonBsccStates);
+
+    // Build the submatrix that only has the transitions between non-BSCC states.
+    storm::storage::SparseMatrix<ValueType> nonBsccTransitions = _transitionMatrix.getSubmatrix(false, nonBsccStates, nonBsccStates);
+
+    // Compute the upper bounds on EVTs for non-BSCC states (using the same state-to-scc mapping).
+    std::vector<ValueType> upperBoundsNonBsccStates = storm::modelchecker::helper::BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnExpectedVisitingTimes(
+        nonBsccTransitions, probabilitiesToBottomStates, [&stateToScc](uint64_t s) { return stateToScc[s]; });
+
+    // Set the upper bounds for non-BSCC states.
+    _upperBounds = std::vector<ValueType>(_transitionMatrix.getRowCount());
+    storm::utility::vector::setVectorValues<ValueType>(_upperBounds.get(), nonBsccStates, upperBoundsNonBsccStates);
+    // TODO h Ignore bounds for BSCC states as they are not used.
+    storm::utility::vector::setVectorValues<ValueType>(_upperBounds.get(), ~nonBsccStates, storm::utility::infinity<ValueType>());
+}
+
+
 template<typename ValueType>
 storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnvironmentForSccSolver(storm::Environment const& env) const {
     storm::Environment subEnv(env);
@@ -187,9 +248,14 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
     }
     if (env.solver().isForceSoundness()) {
         STORM_LOG_ASSERT(_sccDecomposition->hasSccDepth(), "Did not compute the longest SCC chain size although it is needed.");
+        // For sound computations and if the solver has a precision, we need to increase the solver's precision that is used in an SCC.
         auto subEnvPrec = subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType());
-        subEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(
-            subEnvPrec.first.get() / storm::utility::convertNumber<storm::RationalNumber>(_sccDecomposition->getMaxSccDepth())));
+        if (subEnvPrec.first.is_initialized()) {
+            // The solver has a precision which needs to be increased by
+            // TODO h adjust for epsilon-soundness
+            subEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(
+                subEnvPrec.first.get() / (storm::utility::convertNumber<storm::RationalNumber>(_sccDecomposition->getMaxSccDepth()))));
+        }
     }
     return subEnv;
 }
@@ -230,10 +296,7 @@ std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::comput
     // <=> P^T * x + b = x   <- fixpoint system
     // <=> (1-P^T) * x = b   <- equation system
 
-    // We need to check if our sound methods like SVI work on this kind of equation system. Most likely not.
-    STORM_LOG_WARN_COND(!env.solver().isForceSoundness(),
-                        "Sound computations are not properly implemented for the computation of expected number of visits in non-trival SCCs. You might get "
-                        "incorrect results.");
+    // TODO We need to check if SVI works on this kind of equation system (OVI and II work)
     storm::solver::GeneralLinearEquationSolverFactory<ValueType> linearEquationSolverFactory;
     bool isFixpointFormat = linearEquationSolverFactory.getEquationProblemFormat(env) == storm::solver::LinearEquationSolverProblemFormat::FixedPointSystem;
 
@@ -260,8 +323,16 @@ std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::comput
     solver->setLowerBound(storm::utility::zero<ValueType>());
     auto req = solver->getRequirements(env);
     req.clearLowerBounds();
-    // We could compute upper bounds at this point using techniques from Baier et al. [CAV'17] (https://doi.org/10.1007/978-3-319-63387-9_8)
-    // However, all relevant solvers for this kind of equation system do not require upper bounds.
+    if (req.upperBounds().isCritical()) { //TODO H is critical is correct? otherwise every method with --sound needs upper bound?
+        // Compute upper bounds on EVTs using techniques from by Baier et al. [CAV'17] (https://doi.org/10.1007/978-3-319-63387-9_8)
+        if (!_upperBounds.is_initialized()) {
+            createUpperBounds();
+        }
+        auto sccUpperBounds = storm::utility::vector::filterVector(_upperBounds.get(), sccAsBitVector);
+        solver->setUpperBounds(sccUpperBounds);
+        req.clearUpperBounds();
+    }
+
     STORM_LOG_THROW(!req.hasEnabledCriticalRequirement(), storm::exceptions::UnmetRequirementException,
                     "Solver requirements " + req.getEnabledRequirementsAsString() + " not checked.");
     std::vector<ValueType> eqSysValues(sccVector.size());

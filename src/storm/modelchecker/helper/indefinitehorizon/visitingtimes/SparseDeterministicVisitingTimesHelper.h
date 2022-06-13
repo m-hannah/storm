@@ -100,6 +100,12 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
     void createDecomposition(Environment const& env);
 
     /*!
+     * @post _upperBounds points to the vector of upper bounds on expected visiting times.
+     * The upper bounds are computed using techniques from by Baier et al. [CAV'17] (https://doi.org/10.1007/978-3-319-63387-9_8)
+     */
+    void createUpperBounds() const;
+
+    /*!
      * @return the environment used when solving non-trivial SCCs.
      */
     storm::Environment getEnvironmentForSccSolver(storm::Environment const& env) const;
@@ -124,6 +130,10 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
 
     storm::storage::StronglyConnectedComponentDecomposition<ValueType> const* _sccDecomposition;
     std::unique_ptr<storm::storage::StronglyConnectedComponentDecomposition<ValueType>> _computedSccDecomposition;
+
+    // TODO h mutable ok?
+    mutable boost::optional<std::vector<ValueType>> _upperBounds;
+
 };
 
 }  // namespace helper
