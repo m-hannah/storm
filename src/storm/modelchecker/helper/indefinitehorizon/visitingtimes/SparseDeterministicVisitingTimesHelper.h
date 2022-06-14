@@ -106,9 +106,9 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
     void createUpperBounds() const;
 
     /*!
-     * @return the environment used when solving non-trivial SCCs.
+     * @return the environment used when solving non-trivial SCCs for topological solving method.
      */
-    storm::Environment getEnvironmentForSccSolver(storm::Environment const& env) const;
+    storm::Environment getEnvironmentForTopologicalSolver(storm::Environment const& env) const;
 
     /*!
      * Processes (bottom or non-bottom SCCs consisting of a single state). The resulting value is directly inserted into stateValues
@@ -131,9 +131,7 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
     storm::storage::StronglyConnectedComponentDecomposition<ValueType> const* _sccDecomposition;
     std::unique_ptr<storm::storage::StronglyConnectedComponentDecomposition<ValueType>> _computedSccDecomposition;
 
-    // TODO h mutable ok?
     mutable boost::optional<std::vector<ValueType>> _upperBounds;
-
 };
 
 }  // namespace helper
