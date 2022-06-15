@@ -148,7 +148,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
     }
     else {
         // We solve the complete chain (not each SCC individually - adaption of precision is not necessary)
-        storm::storage::BitVector nonBsccStates = storm::storage::BitVector(_transitionMatrix.getRowGroupCount(), false);
+        storm::storage::BitVector bsccStates = storm::storage::BitVector(_transitionMatrix.getRowGroupCount(), false);
 
         STORM_LOG_WARN("Solving NOT topo");
 
@@ -156,13 +156,14 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
         auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
         for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
             auto const& scc = *sccIt;
-            // Mark the states which do not belong to a BSCC.
             sccAsBitVector.set(scc.begin(), scc.end(), true);
 
             auto forwardRow = _transitionMatrix.getRow(*scc.begin());
             if ((scc.size()==1 &&  (forwardRow.getNumberOfEntries() == 1 && forwardRow.begin()->getColumn() == *scc.begin())) //TODO h singleton BSCC
                     || !(std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState))) { //TODO h why does this exclude singleton Bsccs?
-                // This is a BSCC, we set the values of the states to infinity or 0.
+                // This is a BSCC, mark the states.
+                bsccStates = bsccStates | sccAsBitVector;
+                // We set the values of the states to infinity or 0.
                 if (std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isReachableInState)) {
                     // There is some non-zero "input".
                     storm::utility::vector::setVectorValues(stateValues, sccAsBitVector, storm::utility::infinity<ValueType>());
@@ -170,19 +171,17 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
                     // There is no non-zero "input".
                     storm::utility::vector::setVectorValues(stateValues, sccAsBitVector, storm::utility::zero<ValueType>());
                 }
-            }
-            else {
-                // This is not a BSCC, the values are computed below.
-                // todo h this is also needed for ii, optimize?
-                nonBsccStates = nonBsccStates | sccAsBitVector;
 
             }
             sccAsBitVector.clear();
         }
-        // Compute the values for the non-BSCC states.
-        auto result = computeValueForNonTrivialScc(env, nonBsccStates, stateValues);
-        // TODO h warning: jacobi and gs might not converge(?)
-        storm::utility::vector::setVectorValues(stateValues, nonBsccStates, result);
+        // Compute the values for the non-BSCC states if there are some.
+        if(bsccStates.size()< _transitionMatrix.getRowGroupCount()){
+            auto result = computeValueForNonTrivialScc(env, ~bsccStates, stateValues);
+            // TODO h warning: jacobi and gs might not converge(?)
+            storm::utility::vector::setVectorValues(stateValues, ~bsccStates, result);
+        }
+
 
     }
 
@@ -322,6 +321,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::processSingletonScc(uint
         if (!storm::utility::isZero(stateVal) || std::any_of(backwardRow.begin(), backwardRow.end(),
                                                              [&stateValues](auto const& e) { return !storm::utility::isZero(stateValues[e.getColumn()]); })) {
             stateVal = storm::utility::infinity<ValueType>();
+            STORM_LOG_WARN("o");
         }  // else stateVal = 0 (already implied by !(if-condition))
     } else {
         // This is not a BSCC. Compute the state value
