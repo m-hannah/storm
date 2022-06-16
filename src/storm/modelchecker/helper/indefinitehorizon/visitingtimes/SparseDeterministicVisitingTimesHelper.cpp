@@ -109,7 +109,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
         // We only need to adapt precision if we solve each SCC separately (in topological order)
         auto sccEnv = getEnvironmentForTopologicalSolver(env);
 
-        STORM_LOG_WARN("Solving topo");
+        STORM_LOG_WARN("Using topological solving technique.");
 
         // TODO h new fct (stateValues=solveTopological ...)
         // We solve each SCC individually in *forward* topological order
@@ -150,9 +150,8 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
         // We solve the complete chain (not each SCC individually - adaption of precision is not necessary)
         storm::storage::BitVector bsccStates = storm::storage::BitVector(_transitionMatrix.getRowGroupCount(), false);
 
-        STORM_LOG_WARN("Solving NOT topo");
+        STORM_LOG_WARN("NOT using topological solving technique.");
 
-        uint64_t sccIndex = 0;
         auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
         for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
             auto const& scc = *sccIt;
@@ -176,7 +175,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
             sccAsBitVector.clear();
         }
         // Compute the values for the non-BSCC states if there are some.
-        if(bsccStates.size()< _transitionMatrix.getRowGroupCount()){
+        if(!bsccStates.full()){
             auto result = computeValueForNonTrivialScc(env, ~bsccStates, stateValues);
             // TODO h warning: jacobi and gs might not converge(?)
             storm::utility::vector::setVectorValues(stateValues, ~bsccStates, result);
