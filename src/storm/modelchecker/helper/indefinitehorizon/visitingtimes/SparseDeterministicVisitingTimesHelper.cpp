@@ -321,7 +321,6 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::processSingletonScc(uint
         if (!storm::utility::isZero(stateVal) || std::any_of(backwardRow.begin(), backwardRow.end(),
                                                              [&stateValues](auto const& e) { return !storm::utility::isZero(stateValues[e.getColumn()]); })) {
             stateVal = storm::utility::infinity<ValueType>();
-            STORM_LOG_WARN("o");
         }  // else stateVal = 0 (already implied by !(if-condition))
     } else {
         // This is not a BSCC. Compute the state value
