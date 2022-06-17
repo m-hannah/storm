@@ -109,7 +109,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
         // We only need to adapt precision if we solve each SCC separately (in topological order)
         auto sccEnv = getEnvironmentForTopologicalSolver(env);
 
-        STORM_LOG_WARN("Using topological solving technique.");
+        STORM_LOG_WARN("Using a topological solving technique.");
 
         // TODO h new fct (stateValues=solveTopological ...)
         // We solve each SCC individually in *forward* topological order
@@ -150,7 +150,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
         // We solve the complete chain (not each SCC individually - adaption of precision is not necessary)
         storm::storage::BitVector bsccStates = storm::storage::BitVector(_transitionMatrix.getRowGroupCount(), false);
 
-        STORM_LOG_WARN("NOT using topological solving technique.");
+        STORM_LOG_WARN("NOT using a topological solving technique.");
 
         auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
         for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
@@ -299,11 +299,72 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
         STORM_LOG_ASSERT(_sccDecomposition->hasSccDepth(), "Did not compute the longest SCC chain size although it is needed.");
         // For sound computations and if the solver has a precision, we need to increase the solver's precision that is used in an SCC.
         auto subEnvPrec = subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType());
-        if (subEnvPrec.first.is_initialized()) {
-            // The solver has a precision which needs to be increased by
-            // TODO h adjust for epsilon-soundness
+        if (subEnvPrec.first.is_initialized() && _sccDecomposition->getMaxSccDepth()>0) {
+            // The solver has a precision which needs to be increased by ??  TODO h adjust for epsilon-soundness:
+
+            storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowCount(), false);
+            //Todo h similar comutation as above: optimize
+            auto isLeavingTransition = [&sccAsBitVector](auto const& e) { return !sccAsBitVector.get(e.getColumn()); };
+            auto isExitState = [this, &isLeavingTransition](uint64_t state) {
+                auto row = this->_transitionMatrix.getRow(state);
+                return std::any_of(row.begin(), row.end(), isLeavingTransition);
+            };
+            // We need the number of incoming transitions (from states in a different SCC).
+            uint_fast64_t maxNumInc = 0;
+            // And we need the maximal probability <1 between transient states (this value stays 0 if there are no cycles)
+            storm::RationalNumber maxProb = 0;
+
+            auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
+            for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
+                auto const& scc = *sccIt;
+                auto forwardRow = _transitionMatrix.getRow(*scc.begin());
+                sccAsBitVector.set(scc.begin(), scc.end(), true);
+                if (!((scc.size()==1 &&  (forwardRow.getNumberOfEntries() == 1 && forwardRow.begin()->getColumn() == *scc.begin()))
+                    || !(std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)))) {
+                    // This is NOT a BSCC
+
+                    // get transition matrix restricted to this SCC
+                        auto sccMatrix = _transitionMatrix.getSubmatrix(false, sccAsBitVector, sccAsBitVector);
+                    if (sccMatrix.begin()!= sccMatrix.end()){
+                        // The matrix is not empty: get max prob<1
+                        auto entry = *std::max_element(sccMatrix.begin(),
+                                                       std::find_if(sccMatrix.begin(),
+                                                                    sccMatrix.end(),
+                                                                    [](auto const& e) { return storm::utility::isOne(e.getValue()); } ),
+                                                           [&](auto const & e1, auto const & e2) { return e1.getValue() < e2.getValue(); }
+                        );
+                        maxProb = std::max(maxProb, storm::utility::convertNumber<storm::RationalNumber>(entry.getValue()));
+                    }
+
+
+                    // Get number of incoming transitions to this scc (from different sccs)
+                    auto toSccMatrix = _transitionMatrix.getSubmatrix(false, ~sccAsBitVector, sccAsBitVector);
+                    uint_fast64_t maxNumIncLocal = std::count_if(toSccMatrix.begin(), toSccMatrix.end(), [](auto const& e) { return !storm::utility::isZero(e.getValue()); });
+
+                    maxNumInc = std::max(maxNumInc, maxNumIncLocal);
+
+
+                }
+                sccAsBitVector.clear();
+            }
+
+
+
+
+            // We also need the length of the longest SCC chain (without BSCCs).
+            uint_fast64_t maxDepth = _sccDecomposition->getMaxSccDepth()-1;
+
+            // TODO h adjust for epsilon-soundness: this is not completely accurate ...
+            storm::RationalNumber one = storm::RationalNumber(1);
+            storm::RationalNumber scale =
+                storm::utility::pow(storm::utility::convertNumber<storm::RationalNumber>(maxNumInc), maxDepth) *
+                    storm::utility::convertNumber<storm::RationalNumber>(maxDepth) * (one/(one-maxProb))+ one;
+
+            // if scale = 0 no adjustment is necessary (as there is only one BSCC or there are no transitions from different SCCs).
             subEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(
-                subEnvPrec.first.get() / (storm::utility::convertNumber<storm::RationalNumber>(_sccDecomposition->getMaxSccDepth()))));
+                (scale==0) ? subEnvPrec.first.get() : subEnvPrec.first.get() / scale));
+
+
         }
 
     }
