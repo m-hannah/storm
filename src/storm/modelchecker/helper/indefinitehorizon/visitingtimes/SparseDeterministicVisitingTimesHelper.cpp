@@ -328,10 +328,12 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
                     if (sccMatrix.begin()!= sccMatrix.end()){
                         // The matrix is not empty: get max prob<1
                         auto entry = *std::max_element(sccMatrix.begin(),
-                                                       std::find_if(sccMatrix.begin(),
-                                                                    sccMatrix.end(),
-                                                                    [](auto const& e) { return storm::utility::isOne(e.getValue()); } ),
-                                                           [&](auto const & e1, auto const & e2) { return e1.getValue() < e2.getValue(); }
+                                                       sccMatrix.end(),
+                                                       [&](auto const & e1, auto const & e2) {
+                                                            // True if e2 larger and not one or if e1 is 1 and e2 is not 1.
+                                                           return e1.getValue() < e2.getValue() ? !storm::utility::isOne(e2.getValue()) : storm::utility::isOne(e1.getValue()) && !storm::utility::isOne(e2.getValue());}
+                                                       //std::find_if(sccMatrix.begin(), sccMatrix.end(),[](auto const& e) { return storm::utility::isOne(e.getValue()); } ),
+                                                       //[&](auto const & e1, auto const & e2) { return e1.getValue() < e2.getValue();}
                         );
                         maxProb = std::max(maxProb, storm::utility::convertNumber<storm::RationalNumber>(entry.getValue()));
                     }
@@ -347,8 +349,6 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
                 }
                 sccAsBitVector.clear();
             }
-
-
 
 
             // We also need the length of the longest SCC chain (without BSCCs).
