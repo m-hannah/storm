@@ -14,8 +14,9 @@
 #include "storm/utility/macros.h"
 #include "storm/utility/vector.h"
 
-#include "storm/exceptions/UnmetRequirementException.h"
 #include "storm/exceptions/NotSupportedException.h"
+#include "storm/exceptions/UnmetRequirementException.h"
+#include "utility/graph.h"
 
 namespace storm {
 namespace modelchecker {
@@ -367,6 +368,7 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
 
         }
 
+        // TODO check acyclic and clear req
     }
     return subEnv;
 }
@@ -442,6 +444,11 @@ std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::comput
         auto sccUpperBounds = storm::utility::vector::filterVector(_upperBounds.get(), sccAsBitVector);
         solver->setUpperBounds(sccUpperBounds);
         req.clearUpperBounds();
+    }
+
+    if (req.acyclic().isCritical()) {
+        STORM_LOG_THROW(!storm::utility::graph::hasCycle(sccMatrix), storm::exceptions::UnmetRequirementException, "The solver requires an acyclic model, but the model is not acyclic.");
+        req.clearAcyclic();
     }
 
     STORM_LOG_THROW(!req.hasEnabledCriticalRequirement(), storm::exceptions::UnmetRequirementException,
