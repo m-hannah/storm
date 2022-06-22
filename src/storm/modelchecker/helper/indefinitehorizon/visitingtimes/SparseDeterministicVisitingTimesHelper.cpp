@@ -89,7 +89,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
 
     // Create auxiliary data and lambdas
     storm::storage::BitVector sccAsBitVector(stateValues.size(), false);
-    auto isLeavingTransition = [&sccAsBitVector](auto const& e) { return !sccAsBitVector.get(e.getColumn()); };
+    auto isLeavingTransition = [&sccAsBitVector](auto const& e) {return !sccAsBitVector.get(e.getColumn());};
     auto isExitState = [this, &isLeavingTransition](uint64_t state) {
         auto row = this->_transitionMatrix.getRow(state);
         return std::any_of(row.begin(), row.end(), isLeavingTransition);
@@ -157,29 +157,34 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
         for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
             auto const& scc = *sccIt;
             sccAsBitVector.set(scc.begin(), scc.end(), true);
-
-            auto forwardRow = _transitionMatrix.getRow(*scc.begin());
-            if ((scc.size()==1 &&  (forwardRow.getNumberOfEntries() == 1 && forwardRow.begin()->getColumn() == *scc.begin())) //TODO h singleton BSCC
-                    || !(std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState))) { //TODO h why does this exclude singleton Bsccs?
-                // This is a BSCC, mark the states.
-                bsccStates = bsccStates | sccAsBitVector;
-                // We set the values of the states to infinity or 0.
-                if (std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isReachableInState)) {
-                    // There is some non-zero "input".
-                    storm::utility::vector::setVectorValues(stateValues, sccAsBitVector, storm::utility::infinity<ValueType>());
-                } else {
-                    // There is no non-zero "input".
-                    storm::utility::vector::setVectorValues(stateValues, sccAsBitVector, storm::utility::zero<ValueType>());
-                }
-
+            if (!std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)) {
+                    // This is a BSCC, mark the states.
+                    bsccStates = bsccStates | sccAsBitVector;
             }
             sccAsBitVector.clear();
         }
         // Compute the values for the non-BSCC states if there are some.
-        if(!bsccStates.full()){
+        if (!bsccStates.full()) {
             auto result = computeValueForNonTrivialScc(env, ~bsccStates, stateValues);
             // TODO h warning: jacobi and gs might not converge(?)
             storm::utility::vector::setVectorValues(stateValues, ~bsccStates, result);
+        }
+
+        // After computing the state values for the  non-BSCCs, we can set the values of the BSCC states.
+        for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
+            auto const& scc = *sccIt;
+            sccAsBitVector.set(scc.begin(), scc.end(), true);
+            if (!std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)) {
+                // This is a BSCC, we set the values of the states to infinity or 0.
+                if (std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isReachableInState)) {
+                    // The BSCC is reachable: The EVT is infinity
+                    storm::utility::vector::setVectorValues(stateValues, sccAsBitVector, storm::utility::infinity<ValueType>());
+                } else {
+                    // The BSCC is not reachable: The EVT is zero
+                    storm::utility::vector::setVectorValues(stateValues, sccAsBitVector, storm::utility::zero<ValueType>());
+                }
+            }
+            sccAsBitVector.clear();
         }
 
 
@@ -256,9 +261,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::createUpperBounds() cons
         // We mark the states which do belong to a BSCC.
         auto forwardRow = _transitionMatrix.getRow(*scc.begin());
         sccAsBitVector.set(scc.begin(), scc.end(), true);
-        if ((scc.size()==1 &&  (forwardRow.getNumberOfEntries() == 1 && forwardRow.begin()->getColumn() == *scc.begin())) //TODO h singleton BSCC
-            || !(std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState))) { //TODO h why does this exclude singleton Bsccs?
-
+        if (!(std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState))) {
             // This is a BSCC
             bsccStates = bsccStates | sccAsBitVector;
         }
@@ -318,14 +321,12 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
             auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
             for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
                 auto const& scc = *sccIt;
-                auto forwardRow = _transitionMatrix.getRow(*scc.begin());
                 sccAsBitVector.set(scc.begin(), scc.end(), true);
-                if (!((scc.size()==1 &&  (forwardRow.getNumberOfEntries() == 1 && forwardRow.begin()->getColumn() == *scc.begin()))
-                    || !(std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)))) {
+                if ((std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState))) {
                     // This is NOT a BSCC
 
                     // get transition matrix restricted to this SCC
-                        auto sccMatrix = _transitionMatrix.getSubmatrix(false, sccAsBitVector, sccAsBitVector);
+                    auto sccMatrix = _transitionMatrix.getSubmatrix(false, sccAsBitVector, sccAsBitVector);
                     if (sccMatrix.begin()!= sccMatrix.end()){
                         // The matrix is not empty: get max prob<1
                         auto entry = *std::max_element(sccMatrix.begin(),
