@@ -23,14 +23,14 @@ namespace modelchecker {
 namespace helper {
 template<typename ValueType>
 SparseDeterministicVisitingTimesHelper<ValueType>::SparseDeterministicVisitingTimesHelper(storm::storage::SparseMatrix<ValueType> const& transitionMatrix)
-    : _transitionMatrix(transitionMatrix), _exitRates(nullptr), _backwardTransitions(nullptr), _sccDecomposition(nullptr) {
+    : _transitionMatrix(transitionMatrix), _exitRates(nullptr), _backwardTransitions(nullptr), _sccDecomposition(nullptr), _nonBsccStates(_transitionMatrix.getRowCount(), false), _numSccs(0), _maxSccSize(0) {
     // Intentionally left empty
 }
 
 template<typename ValueType>
 SparseDeterministicVisitingTimesHelper<ValueType>::SparseDeterministicVisitingTimesHelper(storm::storage::SparseMatrix<ValueType> const& transitionMatrix,
                                                                                           std::vector<ValueType> const& exitRates)
-    : _transitionMatrix(transitionMatrix), _exitRates(&exitRates), _backwardTransitions(nullptr), _sccDecomposition(nullptr) {
+    : _transitionMatrix(transitionMatrix), _exitRates(&exitRates), _backwardTransitions(nullptr), _sccDecomposition(nullptr), _nonBsccStates(_transitionMatrix.getRowCount(), false), _numSccs(0), _maxSccSize(0) {
     // For the CTMC case we assert that the caller actually provided the probabilistic transitions
     STORM_LOG_ASSERT(this->_transitionMatrix.isProbabilistic(), "Non-probabilistic transitions");
 }
@@ -86,14 +86,11 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
     STORM_LOG_ASSERT(stateValues.size() == _transitionMatrix.getRowCount(), "Dimension missmatch.");
     createBackwardTransitions();
     createDecomposition(env);
+    createNonBsccStateVector();
 
     // Create auxiliary data and lambdas
     storm::storage::BitVector sccAsBitVector(stateValues.size(), false);
     auto isLeavingTransition = [&sccAsBitVector](auto const& e) {return !sccAsBitVector.get(e.getColumn());};
-    auto isExitState = [this, &isLeavingTransition](uint64_t state) {
-        auto row = this->_transitionMatrix.getRow(state);
-        return std::any_of(row.begin(), row.end(), isLeavingTransition);
-    };
     auto isLeavingTransitionWithNonZeroValue = [&isLeavingTransition, &stateValues](auto const& e) {
         return isLeavingTransition(e) && !storm::utility::isZero(stateValues[e.getColumn()]);
     };
@@ -105,14 +102,13 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
         return std::any_of(row.begin(), row.end(), isLeavingTransitionWithNonZeroValue);
     };
 
+
+
     if (env.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Topological) {
 
         // We only need to adapt precision if we solve each SCC separately (in topological order)
         auto sccEnv = getEnvironmentForTopologicalSolver(env);
 
-        STORM_LOG_WARN("Using a topological solving technique.");
-
-        // TODO h new fct (stateValues=solveTopological ...)
         // We solve each SCC individually in *forward* topological order
         storm::utility::ProgressMeasurement progress("sccs");
         progress.setMaxCount(_sccDecomposition->size());
@@ -125,9 +121,9 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
                 processSingletonScc(*scc.begin(), stateValues);
             } else {
                 sccAsBitVector.set(scc.begin(), scc.end(), true);
-                if (std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)) {
+                if (sccAsBitVector.isSubsetOf(_nonBsccStates)) {
                     // This is not a BSCC
-                    auto sccResult = computeValueForNonTrivialScc(sccEnv, sccAsBitVector, stateValues);
+                    auto sccResult = computeValueForScc(sccEnv, sccAsBitVector, stateValues);
                     storm::utility::vector::setVectorValues(stateValues, sccAsBitVector, sccResult);
                 } else {
                     // This is a BSCC
@@ -149,32 +145,18 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
     }
     else {
         // We solve the complete chain (not each SCC individually - adaption of precision is not necessary)
-        storm::storage::BitVector bsccStates = storm::storage::BitVector(_transitionMatrix.getRowGroupCount(), false);
+        // Compute the values for the non-BSCC states if there are some.
+        if (!_nonBsccStates.empty()) {
+            auto result = computeValueForScc(env, _nonBsccStates, stateValues);
+            storm::utility::vector::setVectorValues(stateValues, _nonBsccStates, result);
+        }
 
-        STORM_LOG_WARN("NOT using a topological solving technique.");
-
+        // After computing the state values for the  non-BSCCs, we can set the values of the BSCC states.
         auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
         for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
             auto const& scc = *sccIt;
             sccAsBitVector.set(scc.begin(), scc.end(), true);
-            if (!std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)) {
-                    // This is a BSCC, mark the states.
-                    bsccStates = bsccStates | sccAsBitVector;
-            }
-            sccAsBitVector.clear();
-        }
-        // Compute the values for the non-BSCC states if there are some.
-        if (!bsccStates.full()) {
-            auto result = computeValueForNonTrivialScc(env, ~bsccStates, stateValues);
-            // TODO h warning: jacobi and gs might not converge(?)
-            storm::utility::vector::setVectorValues(stateValues, ~bsccStates, result);
-        }
-
-        // After computing the state values for the  non-BSCCs, we can set the values of the BSCC states.
-        for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
-            auto const& scc = *sccIt;
-            sccAsBitVector.set(scc.begin(), scc.end(), true);
-            if (!std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)) {
+            if (sccAsBitVector.isSubsetOf(~_nonBsccStates)) {
                 // This is a BSCC, we set the values of the states to infinity or 0.
                 if (std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isReachableInState)) {
                     // The BSCC is reachable: The EVT is infinity
@@ -232,41 +214,53 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::createDecomposition(Envi
     }
 }
 
+template<typename ValueType>
+void SparseDeterministicVisitingTimesHelper<ValueType>::createNonBsccStateVector() {
+
+    // Create auxiliary data and lambdas
+    storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowCount(), false);
+    auto isLeavingTransition = [&sccAsBitVector](auto const& e) {return !sccAsBitVector.get(e.getColumn());};
+    auto isExitState = [this, &isLeavingTransition](uint64_t state) {
+        auto row = this->_transitionMatrix.getRow(state);
+        return std::any_of(row.begin(), row.end(), isLeavingTransition);
+    };
+
+    auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
+    for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
+        auto const& scc = *sccIt;
+        sccAsBitVector.set(scc.begin(), scc.end(), true);
+        if (std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)) {
+            // This is not a BSCC, mark the states correspondingly.
+            _nonBsccStates = _nonBsccStates | sccAsBitVector;
+            // Increase counter for number of non-bottom SCCs
+            _numSccs ++;
+            // Update the maximal number of states in one SCC
+            _maxSccSize = std::max(_maxSccSize, sccAsBitVector.getNumberOfSetBits());
+        }
+        sccAsBitVector.clear();
+    }
+
+}
+
 template<>
 void SparseDeterministicVisitingTimesHelper<storm::RationalFunction>::createUpperBounds() const {
     STORM_LOG_THROW(false, storm::exceptions::NotSupportedException,
                     "Computing upper bounds for expected visiting times over rational functions is not supported.");
 }
 
+
 template<typename ValueType>
 void SparseDeterministicVisitingTimesHelper<ValueType>::createUpperBounds() const {
     // compute vector that contains upperBound for each non-BSCC state
 
     storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowGroupCount(), false);
-    auto isLeavingTransition = [&sccAsBitVector](auto const& e) { return !sccAsBitVector.get(e.getColumn()); };
-    auto isExitState = [this, &isLeavingTransition](uint64_t state) {
-        auto row = this->_transitionMatrix.getRow(state);
-        return std::any_of(row.begin(), row.end(), isLeavingTransition);
-    };
 
-    storm::storage::BitVector bsccStates = storm::storage::BitVector(_transitionMatrix.getRowGroupCount(), false);
-
+    // compute the state-to-SCC mapping for Baier's technique for computing upper bounds on EVTs
     std::vector<uint64_t> stateToScc(_transitionMatrix.getRowGroupCount());
-
     uint64_t sccIndex = 0;
     auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
     for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
         auto const& scc = *sccIt;
-
-        // We mark the states which do belong to a BSCC.
-        auto forwardRow = _transitionMatrix.getRow(*scc.begin());
-        sccAsBitVector.set(scc.begin(), scc.end(), true);
-        if (!(std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState))) {
-            // This is a BSCC
-            bsccStates = bsccStates | sccAsBitVector;
-        }
-        sccAsBitVector.clear();
-
         // Save the SCC to which the state belongs.
         for (auto const& state : scc) {
             stateToScc[state] = sccIndex;
@@ -275,10 +269,10 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::createUpperBounds() cons
     }
 
     // Compute the one-step probabilities that lead to BSCC states.
-    std::vector<ValueType> probabilitiesToBottomStates = _transitionMatrix.getConstrainedRowGroupSumVector(~bsccStates, bsccStates);
+    std::vector<ValueType> probabilitiesToBottomStates = _transitionMatrix.getConstrainedRowGroupSumVector(_nonBsccStates, ~_nonBsccStates);
 
     // Build the submatrix that only has the transitions between non-BSCC states.
-    storm::storage::SparseMatrix<ValueType> nonBsccTransitions = _transitionMatrix.getSubmatrix(false, ~bsccStates, ~bsccStates);
+    storm::storage::SparseMatrix<ValueType> nonBsccTransitions = _transitionMatrix.getSubmatrix(false, _nonBsccStates, _nonBsccStates);
 
     // Compute the upper bounds on EVTs for non-BSCC states (using the same state-to-scc mapping).
     std::vector<ValueType> upperBoundsNonBsccStates = storm::modelchecker::helper::BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnExpectedVisitingTimes(
@@ -286,9 +280,9 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::createUpperBounds() cons
 
     // Set the upper bounds for non-BSCC states.
     _upperBounds = std::vector<ValueType>(_transitionMatrix.getRowCount());
-    storm::utility::vector::setVectorValues<ValueType>(_upperBounds.get(), ~bsccStates, upperBoundsNonBsccStates);
-    // TODO h Ignore bounds for BSCC states as they are not used.
-    storm::utility::vector::setVectorValues<ValueType>(_upperBounds.get(), bsccStates, storm::utility::infinity<ValueType>());
+    storm::utility::vector::setVectorValues<ValueType>(_upperBounds.get(), _nonBsccStates, upperBoundsNonBsccStates);
+    // TODO Bounds for BSCC states canbe ignored as they are not used.
+    // storm::utility::vector::setVectorValues<ValueType>(_upperBounds.get(), ~_nonBsccStates, storm::utility::infinity<ValueType>());
 }
 
 
@@ -307,12 +301,7 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
             // The solver has a precision which needs to be increased by ??  TODO h adjust for epsilon-soundness:
 
             storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowCount(), false);
-            //Todo h similar comutation as above: optimize
-            auto isLeavingTransition = [&sccAsBitVector](auto const& e) { return !sccAsBitVector.get(e.getColumn()); };
-            auto isExitState = [this, &isLeavingTransition](uint64_t state) {
-                auto row = this->_transitionMatrix.getRow(state);
-                return std::any_of(row.begin(), row.end(), isLeavingTransition);
-            };
+
             // We need the number of incoming transitions (from states in a different SCC).
             uint_fast64_t maxNumInc = 0;
             // And we need the maximal probability <1 between transient states (this value stays 0 if there are no cycles)
@@ -322,10 +311,9 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
             for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
                 auto const& scc = *sccIt;
                 sccAsBitVector.set(scc.begin(), scc.end(), true);
-                if ((std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState))) {
-                    // This is NOT a BSCC
-
-                    // get transition matrix restricted to this SCC
+                if (sccAsBitVector.isSubsetOf(_nonBsccStates)) {
+                    // This is NOT a BSCC.
+                    // Get transition matrix restricted to this SCC
                     auto sccMatrix = _transitionMatrix.getSubmatrix(false, sccAsBitVector, sccAsBitVector);
                     if (sccMatrix.begin()!= sccMatrix.end()){
                         // The matrix is not empty: get max prob<1
@@ -346,12 +334,9 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
                     uint_fast64_t maxNumIncLocal = std::count_if(toSccMatrix.begin(), toSccMatrix.end(), [](auto const& e) { return !storm::utility::isZero(e.getValue()); });
 
                     maxNumInc = std::max(maxNumInc, maxNumIncLocal);
-
-
                 }
                 sccAsBitVector.clear();
             }
-
 
             // We also need the length of the longest SCC chain (without BSCCs).
             uint_fast64_t maxDepth = _sccDecomposition->getMaxSccDepth()-1;
@@ -365,11 +350,7 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
             // if scale = 0 no adjustment is necessary (as there is only one BSCC or there are no transitions from different SCCs).
             subEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(
                 (scale==0) ? subEnvPrec.first.get() : subEnvPrec.first.get() / scale));
-
-
         }
-
-        // TODO check acyclic and clear req
     }
     return subEnv;
 }
@@ -401,7 +382,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::processSingletonScc(uint
 }
 
 template<typename ValueType>
-std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::computeValueForNonTrivialScc(storm::Environment const& env,
+std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::computeValueForScc(storm::Environment const& env,
                                                                                                        storm::storage::BitVector const& sccAsBitVector,
                                                                                                        std::vector<ValueType> const& stateValues) const {
     // Here we assume that the SCC is not a BSCC
@@ -437,7 +418,7 @@ std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::comput
     solver->setLowerBound(storm::utility::zero<ValueType>());
     auto req = solver->getRequirements(env);
     req.clearLowerBounds();
-    if (req.upperBounds().isCritical()) { //TODO H is critical is correct? otherwise every method with --sound needs upper bound?
+    if (req.upperBounds().isCritical()) {
         // Compute upper bounds on EVTs using techniques from by Baier et al. [CAV'17] (https://doi.org/10.1007/978-3-319-63387-9_8)
         if (!_upperBounds.is_initialized()) {
             createUpperBounds();
@@ -457,6 +438,37 @@ std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::comput
     std::vector<ValueType> eqSysValues(sccVector.size());
     solver->solveEquations(env, eqSysValues, sccVector);
     return eqSysValues;
+}
+
+template<typename ValueType>
+void SparseDeterministicVisitingTimesHelper<ValueType>::printStatisticsToStream(Environment const& env, std::ostream& stream) const {
+    stream << "####### EVTs Computation Statistics #######\n";
+
+    stream << "Solving technique: ";
+    if (env.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Topological) {
+        stream << "topological\n";
+    }
+    else {
+        stream << "not topological\n";
+    }
+
+    stream << "# Topology of the input model without BSCCs: ";
+    if (!_nonBsccStates.empty() && storm::utility::graph::hasCycle(_transitionMatrix.getSubmatrix(false, _nonBsccStates, _nonBsccStates))) {
+        stream << "cyclic\n";
+    }
+    else {
+        stream << "acyclic\n";
+    }
+
+    stream << "# Number of states: " << _transitionMatrix.getRowCount() << '\n';
+
+    stream << "# Number of non-BSCC states: " << (_nonBsccStates.getNumberOfSetBits()) << '\n';
+
+    stream << "# Number of non-bottom SCCs: " << _numSccs << '\n';
+    stream << "# Size of largest non-bottom SCC: " << _maxSccSize << " states \n";
+    stream << "# Length of max SCC chain: " << _sccDecomposition->getMaxSccDepth() << '\n';
+
+    stream << "##########################################\n";
 }
 
 template class SparseDeterministicVisitingTimesHelper<double>;

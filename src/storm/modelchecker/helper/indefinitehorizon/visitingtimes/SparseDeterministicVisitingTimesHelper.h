@@ -83,6 +83,13 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
      */
     void computeExpectedVisitingTimes(Environment const& env, std::vector<ValueType>& stateValues);
 
+    /*!
+     * Prints some information that is relevant for the computation of EVTs (including the number of SCCs of the model etc.) to the given stream.
+     *
+     * @param stream The stream to which to write the expression.
+     */
+    void printStatisticsToStream(Environment const& env, std::ostream& stream) const;
+
    private:
     /*!
      * @return true iff this is a computation on a continuous time model (i.e. CTMC, MA)
@@ -98,6 +105,11 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
      * @post _sccDecomposition points to an SCC decomposition
      */
     void createDecomposition(Environment const& env);
+
+    /*!
+     * @post _nonBsccStates points to the vector of non-BSCC states
+     */
+    void createNonBsccStateVector();
 
     /*!
      * @post _upperBounds points to the vector of upper bounds on expected visiting times.
@@ -119,7 +131,7 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
      * Solves the equation system for non-trivial SCCs (i.e. non-bottom SCCs with more than 1 state).
      * @return for each state of the given SCC the expected number of times that state is visited.
      */
-    std::vector<ValueType> computeValueForNonTrivialScc(storm::Environment const& env, storm::storage::BitVector const& sccAsBitVector,
+    std::vector<ValueType> computeValueForScc(storm::Environment const& env, storm::storage::BitVector const& sccAsBitVector,
                                                         std::vector<ValueType> const& stateValues) const;
 
     storm::storage::SparseMatrix<ValueType> const& _transitionMatrix;
@@ -130,6 +142,11 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
 
     storm::storage::StronglyConnectedComponentDecomposition<ValueType> const* _sccDecomposition;
     std::unique_ptr<storm::storage::StronglyConnectedComponentDecomposition<ValueType>> _computedSccDecomposition;
+
+    storm::storage::BitVector _nonBsccStates;
+    // The number of (non bottom) SCCs
+    uint64_t _numSccs;
+    uint64_t _maxSccSize;
 
     mutable boost::optional<std::vector<ValueType>> _upperBounds;
 };
