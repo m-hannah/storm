@@ -465,7 +465,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::printStatisticsToStream(
     stream << "# Number of non-BSCC states: " << (_nonBsccStates.getNumberOfSetBits()) << '\n';
 
     stream << "# Number of non-bottom SCCs: " << _numSccs << '\n';
-    stream << "# Size of largest non-bottom SCC: " << _maxSccSize << " states \n";
+    stream << "# Size of largest non-bottom SCC: " << _maxSccSize << " states\n";
     stream << "# Length of max SCC chain: " << _sccDecomposition->getMaxSccDepth() << '\n';
 
     stream << "##########################################\n";
