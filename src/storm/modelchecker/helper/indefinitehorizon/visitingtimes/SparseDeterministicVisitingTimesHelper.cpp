@@ -23,14 +23,14 @@ namespace modelchecker {
 namespace helper {
 template<typename ValueType>
 SparseDeterministicVisitingTimesHelper<ValueType>::SparseDeterministicVisitingTimesHelper(storm::storage::SparseMatrix<ValueType> const& transitionMatrix)
-    : _transitionMatrix(transitionMatrix), _exitRates(nullptr), _backwardTransitions(nullptr), _sccDecomposition(nullptr), _nonBsccStates(_transitionMatrix.getRowCount(), false), _numSccs(0), _maxSccSize(0) {
+    : _transitionMatrix(transitionMatrix), _exitRates(nullptr), _backwardTransitions(nullptr), _sccDecomposition(nullptr), _nonBsccStates(_transitionMatrix.getRowCount(), false) {
     // Intentionally left empty
 }
 
 template<typename ValueType>
 SparseDeterministicVisitingTimesHelper<ValueType>::SparseDeterministicVisitingTimesHelper(storm::storage::SparseMatrix<ValueType> const& transitionMatrix,
                                                                                           std::vector<ValueType> const& exitRates)
-    : _transitionMatrix(transitionMatrix), _exitRates(&exitRates), _backwardTransitions(nullptr), _sccDecomposition(nullptr), _nonBsccStates(_transitionMatrix.getRowCount(), false), _numSccs(0), _maxSccSize(0) {
+    : _transitionMatrix(transitionMatrix), _exitRates(&exitRates), _backwardTransitions(nullptr), _sccDecomposition(nullptr), _nonBsccStates(_transitionMatrix.getRowCount(), false) {
     // For the CTMC case we assert that the caller actually provided the probabilistic transitions
     STORM_LOG_ASSERT(this->_transitionMatrix.isProbabilistic(), "Non-probabilistic transitions");
 }
@@ -232,10 +232,6 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::createNonBsccStateVector
         if (std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)) {
             // This is not a BSCC, mark the states correspondingly.
             _nonBsccStates = _nonBsccStates | sccAsBitVector;
-            // Increase counter for number of non-bottom SCCs
-            _numSccs ++;
-            // Update the maximal number of states in one SCC
-            _maxSccSize = std::max(_maxSccSize, sccAsBitVector.getNumberOfSetBits());
         }
         sccAsBitVector.clear();
     }
@@ -440,36 +436,6 @@ std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::comput
     return eqSysValues;
 }
 
-template<typename ValueType>
-void SparseDeterministicVisitingTimesHelper<ValueType>::printStatisticsToStream(Environment const& env, std::ostream& stream) const {
-    stream << "####### EVTs Computation Statistics #######\n";
-
-    stream << "Solving technique: ";
-    if (env.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Topological) {
-        stream << "topological\n";
-    }
-    else {
-        stream << "not topological\n";
-    }
-
-    stream << "# Topology of the input model without BSCCs: ";
-    if (!_nonBsccStates.empty() && storm::utility::graph::hasCycle(_transitionMatrix.getSubmatrix(false, _nonBsccStates, _nonBsccStates))) {
-        stream << "cyclic\n";
-    }
-    else {
-        stream << "acyclic\n";
-    }
-
-    stream << "# Number of states: " << _transitionMatrix.getRowCount() << '\n';
-
-    stream << "# Number of non-BSCC states: " << (_nonBsccStates.getNumberOfSetBits()) << '\n';
-
-    stream << "# Number of non-bottom SCCs: " << _numSccs << '\n';
-    stream << "# Size of largest non-bottom SCC: " << _maxSccSize << " states\n";
-    stream << "# Length of max SCC chain: " << _sccDecomposition->getMaxSccDepth() << '\n';
-
-    stream << "##########################################\n";
-}
 
 template class SparseDeterministicVisitingTimesHelper<double>;
 template class SparseDeterministicVisitingTimesHelper<storm::RationalNumber>;
