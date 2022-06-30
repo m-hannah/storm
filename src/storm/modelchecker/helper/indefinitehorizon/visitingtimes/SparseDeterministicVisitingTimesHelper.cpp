@@ -18,9 +18,6 @@
 #include "storm/exceptions/UnmetRequirementException.h"
 #include "utility/graph.h"
 
-//TODO h: remove
-#include "storm/exceptions/UnexpectedException.h"
-
 namespace storm {
 namespace modelchecker {
 namespace helper {
