@@ -18,6 +18,9 @@
 #include "storm/exceptions/UnmetRequirementException.h"
 #include "utility/graph.h"
 
+//TODO h: remove
+#include "storm/exceptions/UnexpectedException.h"
+
 namespace storm {
 namespace modelchecker {
 namespace helper {
@@ -123,7 +126,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
                 sccAsBitVector.set(scc.begin(), scc.end(), true);
                 if (sccAsBitVector.isSubsetOf(_nonBsccStates)) {
                     // This is not a BSCC
-                    auto sccResult = computeValueForScc(sccEnv, sccAsBitVector, stateValues);
+                    auto sccResult = computeValueForStateSet(sccEnv, sccAsBitVector, stateValues);
                     storm::utility::vector::setVectorValues(stateValues, sccAsBitVector, sccResult);
                 } else {
                     // This is a BSCC
@@ -144,10 +147,9 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
         }
     }
     else {
-        // We solve the complete chain (not each SCC individually - adaption of precision is not necessary)
-        // Compute the values for the non-BSCC states if there are some.
+        // We solve the equation system for all non-BSCC in one step (not each SCC individually - adaption of precision is not necessary)
         if (!_nonBsccStates.empty()) {
-            auto result = computeValueForScc(env, _nonBsccStates, stateValues);
+            auto result = computeValueForStateSet(env, _nonBsccStates, stateValues);
             storm::utility::vector::setVectorValues(stateValues, _nonBsccStates, result);
         }
 
@@ -168,8 +170,6 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
             }
             sccAsBitVector.clear();
         }
-
-
     }
 
     if (isContinuousTime()) {
@@ -239,47 +239,25 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::createNonBsccStateVector
 }
 
 template<>
-void SparseDeterministicVisitingTimesHelper<storm::RationalFunction>::createUpperBounds() const {
+std::vector<storm::RationalFunction> SparseDeterministicVisitingTimesHelper<storm::RationalFunction>::computeUpperBounds(storm::storage::BitVector const& stateSetAsBitvector) const {
     STORM_LOG_THROW(false, storm::exceptions::NotSupportedException,
                     "Computing upper bounds for expected visiting times over rational functions is not supported.");
 }
 
 
 template<typename ValueType>
-void SparseDeterministicVisitingTimesHelper<ValueType>::createUpperBounds() const {
-    // compute vector that contains upperBound for each non-BSCC state
-
-    storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowGroupCount(), false);
-
-    // compute the state-to-SCC mapping for Baier's technique for computing upper bounds on EVTs
-    std::vector<uint64_t> stateToScc(_transitionMatrix.getRowGroupCount());
-    uint64_t sccIndex = 0;
-    auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
-    for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
-        auto const& scc = *sccIt;
-        // Save the SCC to which the state belongs.
-        for (auto const& state : scc) {
-            stateToScc[state] = sccIndex;
-        }
-        ++sccIndex;
-    }
-
-    // Compute the one-step probabilities that lead to BSCC states.
-    std::vector<ValueType> probabilitiesToBottomStates = _transitionMatrix.getConstrainedRowGroupSumVector(_nonBsccStates, ~_nonBsccStates);
+std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::computeUpperBounds(storm::storage::BitVector const& stateSetAsBitvector) const {
+    // Compute the one-step probabilities that lead to states outside stateSetAsBitvector
+    std::vector<ValueType> leavingTransitions = _transitionMatrix.getConstrainedRowGroupSumVector(stateSetAsBitvector, ~stateSetAsBitvector);
 
     // Build the submatrix that only has the transitions between non-BSCC states.
-    storm::storage::SparseMatrix<ValueType> nonBsccTransitions = _transitionMatrix.getSubmatrix(false, _nonBsccStates, _nonBsccStates);
+    storm::storage::SparseMatrix<ValueType> transitions = _transitionMatrix.getSubmatrix(false, stateSetAsBitvector, stateSetAsBitvector);
 
     // Compute the upper bounds on EVTs for non-BSCC states (using the same state-to-scc mapping).
-    std::vector<ValueType> upperBoundsNonBsccStates = storm::modelchecker::helper::BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnExpectedVisitingTimes(
-        nonBsccTransitions, probabilitiesToBottomStates, [&stateToScc](uint64_t s) { return stateToScc[s]; });
-
-    // Set the upper bounds for non-BSCC states.
-    _upperBounds = std::vector<ValueType>(_transitionMatrix.getRowCount());
-    storm::utility::vector::setVectorValues<ValueType>(_upperBounds.get(), _nonBsccStates, upperBoundsNonBsccStates);
-    // TODO Bounds for BSCC states canbe ignored as they are not used.
-    // storm::utility::vector::setVectorValues<ValueType>(_upperBounds.get(), ~_nonBsccStates, storm::utility::infinity<ValueType>());
-}
+    std::vector<ValueType> upperBounds = storm::modelchecker::helper::BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnExpectedVisitingTimes(
+        transitions, leavingTransitions);
+    return upperBounds;
+    }
 
 
 template<typename ValueType>
@@ -378,8 +356,8 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::processSingletonScc(uint
 }
 
 template<typename ValueType>
-std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::computeValueForScc(storm::Environment const& env,
-                                                                                                       storm::storage::BitVector const& sccAsBitVector,
+std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::computeValueForStateSet(storm::Environment const& env,
+                                                                                                       storm::storage::BitVector const& stateSetAsBitvector,
                                                                                                        std::vector<ValueType> const& stateValues) const {
     // Here we assume that the SCC is not a BSCC
     // Let P be the SCC matrix. We solve the equation system
@@ -392,17 +370,17 @@ std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::comput
     bool isFixpointFormat = linearEquationSolverFactory.getEquationProblemFormat(env) == storm::solver::LinearEquationSolverProblemFormat::FixedPointSystem;
 
     // Get the matrix for the equation system
-    auto sccMatrix = _backwardTransitions->getSubmatrix(false, sccAsBitVector, sccAsBitVector, !isFixpointFormat);
+    auto sccMatrix = _backwardTransitions->getSubmatrix(false, stateSetAsBitvector, stateSetAsBitvector, !isFixpointFormat);
     if (!isFixpointFormat) {
         sccMatrix.convertToEquationSystem();
     }
 
     // Get the vector for the equation system
-    auto sccVector = storm::utility::vector::filterVector(stateValues, sccAsBitVector);
+    auto sccVector = storm::utility::vector::filterVector(stateValues, stateSetAsBitvector);
     auto valIt = sccVector.begin();
-    for (auto sccState : sccAsBitVector) {
+    for (auto sccState : stateSetAsBitvector) {
         for (auto const& entry : _backwardTransitions->getRow(sccState)) {
-            if (!sccAsBitVector.get(entry.getColumn())) {
+            if (!stateSetAsBitvector.get(entry.getColumn())) {
                 (*valIt) += entry.getValue() * stateValues[entry.getColumn()];
             }
         }
@@ -416,11 +394,8 @@ std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::comput
     req.clearLowerBounds();
     if (req.upperBounds().isCritical()) {
         // Compute upper bounds on EVTs using techniques from by Baier et al. [CAV'17] (https://doi.org/10.1007/978-3-319-63387-9_8)
-        if (!_upperBounds.is_initialized()) {
-            createUpperBounds();
-        }
-        auto sccUpperBounds = storm::utility::vector::filterVector(_upperBounds.get(), sccAsBitVector);
-        solver->setUpperBounds(sccUpperBounds);
+        std::vector<ValueType> upperBounds = computeUpperBounds(stateSetAsBitvector);
+        solver->setUpperBounds(upperBounds);
         req.clearUpperBounds();
     }
 

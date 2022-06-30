@@ -105,10 +105,12 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
     void createNonBsccStateVector();
 
     /*!
-     * @post _upperBounds points to the vector of upper bounds on expected visiting times.
-     * The upper bounds are computed using techniques from by Baier et al. [CAV'17] (https://doi.org/10.1007/978-3-319-63387-9_8)
+     * Computes for each state an upper bound on the expected number of times we are visiting that state.
+     * @note The upper bounds are computed using techniques from by Baier et al. [CAV'17] (https://doi.org/10.1007/978-3-319-63387-9_8)
+     * @param stateSetAsBitVector the states for which the upper bounds are computed.
+     * @return for each state the upper bound on the expected number of times that state is visited.
      */
-    void createUpperBounds() const;
+    std::vector<ValueType> computeUpperBounds(storm::storage::BitVector const& stateSetAsBitVector) const;
 
     /*!
      * @return the environment used when solving non-trivial SCCs for topological solving method.
@@ -121,10 +123,10 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
     void processSingletonScc(uint64_t sccState, std::vector<ValueType>& stateValues) const;
 
     /*!
-     * Solves the equation system for non-trivial SCCs (i.e. non-bottom SCCs with more than 1 state).
-     * @return for each state of the given SCC the expected number of times that state is visited.
+     * Solves the equation system for non-singleton (subs)sets of the chain's non-bottom states.
+     * @return for each state of the given set the expected number of times that state is visited.
      */
-    std::vector<ValueType> computeValueForScc(storm::Environment const& env, storm::storage::BitVector const& sccAsBitVector,
+    std::vector<ValueType> computeValueForStateSet(storm::Environment const& env, storm::storage::BitVector const& stateSetAsBitVector,
                                                         std::vector<ValueType> const& stateValues) const;
 
     storm::storage::SparseMatrix<ValueType> const& _transitionMatrix;
@@ -137,8 +139,6 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
     std::unique_ptr<storm::storage::StronglyConnectedComponentDecomposition<ValueType>> _computedSccDecomposition;
 
     storm::storage::BitVector _nonBsccStates;
-
-    mutable boost::optional<std::vector<ValueType>> _upperBounds;
 };
 
 }  // namespace helper
