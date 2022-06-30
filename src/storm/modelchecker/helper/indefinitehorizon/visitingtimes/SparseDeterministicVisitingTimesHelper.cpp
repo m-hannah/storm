@@ -272,7 +272,9 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
         // For sound computations and if the solver has a precision, we need to increase the solver's precision that is used in an SCC.
         auto subEnvPrec = subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType());
         if (subEnvPrec.first.is_initialized() && _sccDecomposition->getMaxSccDepth()>0) {
-            // The solver has a precision which needs to be increased by ??  TODO h adjust for epsilon-soundness:
+            // The solver has a precision which needs to be increased:
+            // This depends on the maximal SCC chain length, the maximal number of incoming transitions,
+            // and the maximal probability <1 between transient states.
 
             storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowCount(), false);
 
@@ -302,7 +304,6 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
                         maxProb = std::max(maxProb, storm::utility::convertNumber<storm::RationalNumber>(entry.getValue()));
                     }
 
-
                     // Get number of incoming transitions to this scc (from different sccs)
                     auto toSccMatrix = _transitionMatrix.getSubmatrix(false, ~sccAsBitVector, sccAsBitVector);
                     uint_fast64_t maxNumIncLocal = std::count_if(toSccMatrix.begin(), toSccMatrix.end(), [](auto const& e) { return !storm::utility::isZero(e.getValue()); });
@@ -312,18 +313,18 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
                 sccAsBitVector.clear();
             }
 
-            // We also need the length of the longest SCC chain (without BSCCs).
-            uint_fast64_t maxDepth = _sccDecomposition->getMaxSccDepth()-1;
-
-            // TODO h adjust for epsilon-soundness: this is not completely accurate ...
+            // TODO h adjust for epsilon-soundness: provide formal proof (maxDepth = n-1)
             storm::RationalNumber one = storm::RationalNumber(1);
-            storm::RationalNumber scale =
-                storm::utility::pow(storm::utility::convertNumber<storm::RationalNumber>(maxNumInc), maxDepth) *
-                    storm::utility::convertNumber<storm::RationalNumber>(maxDepth) * (one/(one-maxProb))+ one;
-
-            // if scale = 0 no adjustment is necessary (as there is only one BSCC or there are no transitions from different SCCs).
-            subEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(
-                (scale==0) ? subEnvPrec.first.get() : subEnvPrec.first.get() / scale));
+            storm::RationalNumber scale = one;
+            if (maxNumInc != 0) {
+                // As the maximal number of incoming transitions is greater than one, adjustment is necessary.
+                // For this, we need the length of the longest SCC chain (without BSCCs).
+                uint_fast64_t maxDepth = _sccDecomposition->getMaxSccDepth()-1;
+                for (int i = 1; i<maxDepth; i++) {
+                    scale = scale + storm::utility::pow(storm::utility::convertNumber<storm::RationalNumber>(maxNumInc), i) * (one/(one-maxProb));
+                }
+            }
+            subEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(subEnvPrec.first.get() / scale));
         }
     }
     return subEnv;
