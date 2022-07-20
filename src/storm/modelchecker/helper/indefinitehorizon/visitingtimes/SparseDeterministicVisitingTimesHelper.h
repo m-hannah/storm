@@ -113,6 +113,14 @@ class SparseDeterministicVisitingTimesHelper : public SingleValueModelCheckerHel
     std::vector<ValueType> computeUpperBounds(storm::storage::BitVector const& stateSetAsBitVector) const;
 
     /*!
+     * Adapts the precision of the solving method if necessary (i.e., if the model is a CTMC or when a topological solving method is used).
+     * @param env The environment, containing information on the precision that should be achieved.
+     * @param topological If set to true, the environment when solving non-trivial SCCs for topological solving method is returned.
+     * @return the environment used when solving the equation system(s) for EVTs with adapted precision for a topological solving method or CTMCs.
+     */
+    storm::Environment getEnvironmentForSolver(storm::Environment const& env, bool topological = false) const;
+
+    /*!
      * @return the environment used when solving non-trivial SCCs for topological solving method.
      */
     storm::Environment getEnvironmentForTopologicalSolver(storm::Environment const& env) const;

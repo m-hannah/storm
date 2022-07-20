@@ -103,11 +103,10 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
     };
 
 
-
     if (env.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Topological) {
 
-        // We only need to adapt precision if we solve each SCC separately (in topological order)
-        auto sccEnv = getEnvironmentForTopologicalSolver(env);
+        // We need to adapt precision if we solve each SCC separately (in topological order) and/or consider CTMCs
+        auto sccEnv = getEnvironmentForSolver(env, true);
 
         // We solve each SCC individually in *forward* topological order
         storm::utility::ProgressMeasurement progress("sccs");
@@ -144,9 +143,11 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
         }
     }
     else {
-        // We solve the equation system for all non-BSCC in one step (not each SCC individually - adaption of precision is not necessary)
+        // We solve the equation system for all non-BSCC in one step (not each SCC individually - adaption of precision is not necessary).
         if (!_nonBsccStates.empty()) {
-            auto result = computeValueForStateSet(env, _nonBsccStates, stateValues);
+            // We need to adapt precision if we consider CTMCs.
+            Environment adjustedEnv = getEnvironmentForSolver(env, false);
+            auto result = computeValueForStateSet(adjustedEnv, _nonBsccStates, stateValues);
             storm::utility::vector::setVectorValues(stateValues, _nonBsccStates, result);
         }
 
@@ -247,14 +248,52 @@ std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::comput
     // Compute the one-step probabilities that lead to states outside stateSetAsBitvector
     std::vector<ValueType> leavingTransitions = _transitionMatrix.getConstrainedRowGroupSumVector(stateSetAsBitvector, ~stateSetAsBitvector);
 
-    // Build the submatrix that only has the transitions between non-BSCC states.
-    storm::storage::SparseMatrix<ValueType> transitions = _transitionMatrix.getSubmatrix(false, stateSetAsBitvector, stateSetAsBitvector);
+    // Build the submatrix that only has the transitions between states in the state set.
+    storm::storage::SparseMatrix<ValueType> subTransitionMatrix = _transitionMatrix.getSubmatrix(false, stateSetAsBitvector, stateSetAsBitvector);
 
     // Compute the upper bounds on EVTs for non-BSCC states (using the same state-to-scc mapping).
     std::vector<ValueType> upperBounds = storm::modelchecker::helper::BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnExpectedVisitingTimes(
-        transitions, leavingTransitions);
+        subTransitionMatrix, leavingTransitions);
     return upperBounds;
+}
+
+
+
+template<typename ValueType>
+storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnvironmentForSolver(storm::Environment const& env, bool topological) const {
+    storm::Environment newEnv(env);
+
+    if (topological) {
+        // Overwrite the environment with the environment for the underlying solver.
+        newEnv = getEnvironmentForTopologicalSolver(env);
     }
+
+    // Adjust precision for CTMCs, because the EVTs are divided by the exit rates at the end.
+    if (isContinuousTime()){
+        auto prec = newEnv.solver().getPrecisionOfLinearEquationSolver(newEnv.solver().getLinearEquationSolverType());
+        if (prec.first.is_initialized()) {
+            ValueType min = *std::min_element(_exitRates->begin(), _exitRates->end());
+            STORM_LOG_THROW(!storm::utility::isZero(min), storm::exceptions::InvalidOperationException, "An error occurred during the adjustment of the precision. Min. rate = " <<min);
+            newEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(prec.first.get() * storm::utility::convertNumber<storm::RationalNumber>(min)));
+        }
+    }
+
+    auto prec = newEnv.solver().getPrecisionOfLinearEquationSolver(newEnv.solver().getLinearEquationSolverType());
+    if (prec.first.is_initialized()) {
+        STORM_PRINT("Precision for EVTs computation: " << prec.first.get() <<" (approx: "<< storm::utility::convertNumber<double>(prec.first.get())<<")" <<'\n');
+    }
+
+    return newEnv;
+}
+
+
+template<>
+storm::Environment SparseDeterministicVisitingTimesHelper<storm::RationalFunction>::getEnvironmentForTopologicalSolver(storm::Environment const& env) const {
+    storm::Environment subEnv(env);
+    subEnv.solver().setLinearEquationSolverType(env.solver().topological().getUnderlyingEquationSolverType(),
+                                                env.solver().topological().isUnderlyingEquationSolverTypeSetFromDefault());
+
+}
 
 
 template<typename ValueType>
@@ -263,22 +302,38 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
     subEnv.solver().setLinearEquationSolverType(env.solver().topological().getUnderlyingEquationSolverType(),
                                                 env.solver().topological().isUnderlyingEquationSolverTypeSetFromDefault());
 
+    // To guarantee soundness for OVI, II, SVI we need to increase the precision in each SCC.
+    auto subEnvPrec = subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType());
+    bool needAdaptPrecision =
+        env.solver().isForceSoundness() &&
+        subEnvPrec.first.is_initialized() &&
+        subEnvPrec.second.is_initialized();
 
-    if (env.solver().isForceSoundness()) {
+    // Assert that we only adapt the precision for native solvers
+    STORM_LOG_ASSERT(!needAdaptPrecision || subEnv.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Native,
+                         "The precision for the current solver type is not adjusted for this solving method. Ensure that this is correct for topological computation.");
+
+    if (needAdaptPrecision && subEnvPrec.second.get()) {
         STORM_LOG_ASSERT(_sccDecomposition->hasSccDepth(), "Did not compute the longest SCC chain size although it is needed.");
-        // For sound computations and if the solver has a precision, we need to increase the solver's precision that is used in an SCC.
+        // Sound computations wrt. relative precision:
+        // We need to increase the solver's relative precision that is used in an SCC depending on the maximal SCC chain length.
         auto subEnvPrec = subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType());
-        if (subEnvPrec.first.is_initialized() && _sccDecomposition->getMaxSccDepth()>0) {
-            // The solver has a precision which needs to be increased:
-            // This depends on the maximal SCC chain length, the maximal number of incoming transitions,
-            // and the maximal probability <1 between transient states.
+            subEnv.solver().setLinearEquationSolverPrecision(
+                static_cast<storm::RationalNumber>(subEnvPrec.first.get() / storm::utility::convertNumber<storm::RationalNumber>(this->_sccDecomposition->getMaxSccDepth())));
+
+    } else if (needAdaptPrecision && !subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType()).second.get()) {
+        // Sound computations wrt. absolute precision:
+        // The adjustment of the precision used in each SCC depends on the maximal SCC chain length,
+        // the maximal number of incoming transitions, and the maximal probability <1 to reach another states in an SCC.
+        if (_sccDecomposition->getMaxSccDepth()>0) {
+            // There is at least on non-bottom SCC
 
             storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowCount(), false);
 
-            // We need the number of incoming transitions (from states in a different SCC).
+            // We need the maximal number of incoming transitions to an SCC
             uint_fast64_t maxNumInc = 0;
-            // And we need the maximal probability <1 between transient states (this value stays 0 if there are no cycles)
-            storm::RationalNumber maxProb = 0;
+            // And we need the maximal recurrence probability (or an upper bound) for the transient states in one SCC (this value stays 0 if there are no cycles)
+            ValueType maxRecProb = storm::utility::zero<ValueType>();
 
             auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
             for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
@@ -286,44 +341,45 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
                 sccAsBitVector.set(scc.begin(), scc.end(), true);
                 if (sccAsBitVector.isSubsetOf(_nonBsccStates)) {
                     // This is NOT a BSCC.
-                    // Get transition matrix restricted to this SCC
-                    auto sccMatrix = _transitionMatrix.getSubmatrix(false, sccAsBitVector, sccAsBitVector);
-                    if (sccMatrix.begin()!= sccMatrix.end()){
-                        // The matrix is not empty: get max prob<1
-                        auto entry = *std::max_element(sccMatrix.begin(),
-                                                       sccMatrix.end(),
-                                                       [&](auto const & e1, auto const & e2) {
-                                                            // True if e2 larger and not one or if e1 is 1 and e2 is not 1.
-                                                           return e1.getValue() < e2.getValue() ? !storm::utility::isOne(e2.getValue()) : storm::utility::isOne(e1.getValue()) && !storm::utility::isOne(e2.getValue());}
-                                                       //std::find_if(sccMatrix.begin(), sccMatrix.end(),[](auto const& e) { return storm::utility::isOne(e.getValue()); } ),
-                                                       //[&](auto const & e1, auto const & e2) { return e1.getValue() < e2.getValue();}
-                        );
-                        maxProb = std::max(maxProb, storm::utility::convertNumber<storm::RationalNumber>(entry.getValue()));
-                    }
+                    // Build the submatrix that only has the transitions between non-BSCC states.
+                    auto subTransitionMatrix = _transitionMatrix.getSubmatrix(false, sccAsBitVector, sccAsBitVector);
+                    // Compute the one-step probabilities that lead to states outside the SCC
+                    std::vector<ValueType> leavingTransitions = _transitionMatrix.getConstrainedRowGroupSumVector(sccAsBitVector, ~sccAsBitVector & sccAsBitVector);
 
-                    // Get number of incoming transitions to this scc (from different sccs)
-                    auto toSccMatrix = _transitionMatrix.getSubmatrix(false, ~sccAsBitVector, sccAsBitVector);
-                    uint_fast64_t maxNumIncLocal = std::count_if(toSccMatrix.begin(), toSccMatrix.end(), [](auto const& e) { return !storm::utility::isZero(e.getValue()); });
+                    // Compute the upper bounds on EVTs for non-BSCC states (using the same state-to-scc mapping).
+                    std::vector<ValueType> upperBounds =
+                        storm::modelchecker::helper::BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnRecurrenceProbabilities(subTransitionMatrix,
+                                                                                                                                           leavingTransitions);
 
-                    maxNumInc = std::max(maxNumInc, maxNumIncLocal);
+                    maxRecProb = std::max(maxRecProb, (*std::max_element(upperBounds.begin(), upperBounds.end())));
+                    std::cout << (maxRecProb)<< "a ";
+                    maxRecProb=0; //Todo h
                 }
+
+                // Get number of incoming transitions to this scc (from different sccs)
+                auto toSccMatrix = _transitionMatrix.getSubmatrix(false, ~sccAsBitVector, sccAsBitVector);
+                uint_fast64_t localNumInc =
+                    std::count_if(toSccMatrix.begin(), toSccMatrix.end(), [](auto const& e) { return !storm::utility::isZero(e.getValue()); });
+
+                maxNumInc = std::max(maxNumInc, localNumInc);
                 sccAsBitVector.clear();
             }
 
-            // TODO h adjust for epsilon-soundness: provide formal proof (maxDepth = n-1)
             storm::RationalNumber one = storm::RationalNumber(1);
             storm::RationalNumber scale = one;
+
             if (maxNumInc != 0) {
                 // As the maximal number of incoming transitions is greater than one, adjustment is necessary.
                 // For this, we need the length of the longest SCC chain (without BSCCs).
-                uint_fast64_t maxDepth = _sccDecomposition->getMaxSccDepth()-1;
-                for (int i = 1; i<maxDepth; i++) {
-                    scale = scale + storm::utility::pow(storm::utility::convertNumber<storm::RationalNumber>(maxNumInc), i) * (one/(one-maxProb));
+                for (int i = 1; i <= _sccDecomposition->getMaxSccDepth(); i++) {
+                    scale = scale + storm::utility::pow(storm::utility::convertNumber<storm::RationalNumber>(maxNumInc), i) *
+                                        (one / (one - storm::utility::convertNumber<storm::RationalNumber>(maxRecProb)));
                 }
             }
             subEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(subEnvPrec.first.get() / scale));
         }
     }
+
     return subEnv;
 }
 

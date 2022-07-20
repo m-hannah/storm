@@ -22,8 +22,9 @@ BaierUpperRewardBoundsComputer<ValueType>::BaierUpperRewardBoundsComputer(storm:
     // Intentionally left empty.
 }
 
+
 template<typename ValueType>
-std::vector<ValueType> BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnExpectedVisitingTimes(
+std::vector<ValueType> BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnRecurrenceProbabilities(
     storm::storage::SparseMatrix<ValueType> const& transitionMatrix, std::vector<ValueType> const& oneStepTargetProbabilities) {
     std::vector<uint64_t> stateToScc(transitionMatrix.getRowGroupCount());
     {
@@ -38,19 +39,24 @@ std::vector<ValueType> BaierUpperRewardBoundsComputer<ValueType>::computeUpperBo
             ++sccIndex;
         }
     }
-    return computeUpperBoundOnExpectedVisitingTimes(transitionMatrix, oneStepTargetProbabilities, [&stateToScc](uint64_t s) { return stateToScc[s]; });
+    return computeUpperBoundOnRecurrenceProbabilities(transitionMatrix, oneStepTargetProbabilities, [&stateToScc](uint64_t s) { return stateToScc[s]; });
 }
 
 template<typename ValueType>
-std::vector<ValueType> BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnExpectedVisitingTimes(
+std::vector<ValueType> BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnRecurrenceProbabilities(
     storm::storage::SparseMatrix<ValueType> const& transitionMatrix, std::vector<ValueType> const& oneStepTargetProbabilities,
     std::function<uint64_t(uint64_t)> const& stateToScc) {
+    // Compute the maximal recurrence probability dt for each state t.
+
     assert(transitionMatrix.getRowCount() == oneStepTargetProbabilities.size());
     auto const numStates = transitionMatrix.getRowGroupCount();
 
     // A choice is valid iff it goes to non-remaining states with non-zero probability.
     // Initially, mark all choices as valid that have non-zero probability to go to the target states *or* to a different Scc.
+    // Todo h beferoe: (no rationalfct)
     auto validChoices = storm::utility::vector::filterGreaterZero(oneStepTargetProbabilities);
+    // auto validChoices = storm::utility::vector::filter<ValueType>(oneStepTargetProbabilities, [](ValueType const& value) -> bool { return !storm::utility::isZero(value); });
+
     for (uint64_t state = 0; state < numStates; ++state) {
         auto const scc = stateToScc(state);
         for (auto rowIndex = transitionMatrix.getRowGroupIndices()[state], rowEnd = transitionMatrix.getRowGroupIndices()[state + 1]; rowIndex < rowEnd;
@@ -62,7 +68,7 @@ std::vector<ValueType> BaierUpperRewardBoundsComputer<ValueType>::computeUpperBo
         }
     }
 
-    // Vector that holds the result.
+    // Vector that holds the result (dt for each state t).
     std::vector<ValueType> result(numStates, storm::utility::one<ValueType>());
 
     // The states that we still need to assign a value.
@@ -128,6 +134,37 @@ std::vector<ValueType> BaierUpperRewardBoundsComputer<ValueType>::computeUpperBo
         std::swap(nextStates, currentStates);
     }
 
+    return result;
+}
+
+template<typename ValueType>
+std::vector<ValueType> BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnExpectedVisitingTimes(
+    storm::storage::SparseMatrix<ValueType> const& transitionMatrix, std::vector<ValueType> const& oneStepTargetProbabilities) {
+    std::vector<uint64_t> stateToScc(transitionMatrix.getRowGroupCount());
+    {
+        // Create an SCC decomposition of the system.
+        storm::storage::StronglyConnectedComponentDecomposition<ValueType> sccDecomposition(transitionMatrix);
+
+        uint64_t sccIndex = 0;
+        for (auto const& block : sccDecomposition) {
+            for (auto const& state : block) {
+                stateToScc[state] = sccIndex;
+            }
+            ++sccIndex;
+        }
+    }
+    return computeUpperBoundOnExpectedVisitingTimes(transitionMatrix, oneStepTargetProbabilities, [&stateToScc](uint64_t s) { return stateToScc[s]; });
+}
+
+
+template<typename ValueType>
+std::vector<ValueType> BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnExpectedVisitingTimes(
+    storm::storage::SparseMatrix<ValueType> const& transitionMatrix, std::vector<ValueType> const& oneStepTargetProbabilities,
+    std::function<uint64_t(uint64_t)> const& stateToScc) {
+
+    // Vector that contains the maximal recurrence probability dt for each state t.
+    std::vector<ValueType> result = computeUpperBoundOnRecurrenceProbabilities(transitionMatrix, oneStepTargetProbabilities, stateToScc);
+
     // Transform the d_t to an upper bound for zeta(t)
     storm::utility::vector::applyPointwise(result, result, [](ValueType const& r) -> ValueType { return storm::utility::one<ValueType>() / r; });
     return result;
@@ -162,6 +199,7 @@ template class BaierUpperRewardBoundsComputer<double>;
 
 #ifdef STORM_HAVE_CARL
 template class BaierUpperRewardBoundsComputer<storm::RationalNumber>;
+//todo h template class BaierUpperRewardBoundsComputer<storm::RationalFunction>;
 #endif
 }  // namespace helper
 }  // namespace modelchecker

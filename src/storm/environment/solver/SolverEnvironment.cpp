@@ -168,12 +168,14 @@ void SolverEnvironment::setLinearEquationSolverPrecision(boost::optional<storm::
                          getLinearEquationSolverType() == storm::solver::EquationSolverType::Topological,
                      "The current solver type is not respected in this method.");
     if (newPrecision) {
+        //TODO h: assert from above here instead!
         native().setPrecision(newPrecision.get());
         gmmxx().setPrecision(newPrecision.get());
         eigen().setPrecision(newPrecision.get());
         // Elimination and Topological solver do not have a precision
     }
     if (relativePrecision) {
+        //TODO h: assert from above here but without native!
         native().setRelativeTerminationCriterion(relativePrecision.get());
         // gmm, eigen, elimination, and topological solvers do not have a precision
     }

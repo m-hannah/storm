@@ -36,6 +36,26 @@ class BaierUpperRewardBoundsComputer {
     ValueType computeUpperBound();
 
     /*!
+     * Computes for each state an upper bound for the maximal recurrence probability for each state.
+     * @param transitionMatrix The matrix defining the transitions of the system without the transitions
+     * that lead directly to the goal state.
+     * @param oneStepTargetProbabilities For each choice the probability to go to a goal state in one step.
+     */
+    static std::vector<ValueType> computeUpperBoundOnRecurrenceProbabilities(storm::storage::SparseMatrix<ValueType> const& transitionMatrix,
+                                                                           std::vector<ValueType> const& oneStepTargetProbabilities);
+
+    /*!
+     * Computes for each state an upper bound for the maximal recurrence probability for each state.
+     * @param transitionMatrix The matrix defining the transitions of the system without the transitions
+     * that lead directly to the goal state.
+     * @param oneStepTargetProbabilities For each choice the probability to go to a goal state in one step.
+     * @param stateToScc Returns the SCC index for each state
+     */
+    static std::vector<ValueType> computeUpperBoundOnRecurrenceProbabilities(storm::storage::SparseMatrix<ValueType> const& transitionMatrix,
+                                                                           std::vector<ValueType> const& oneStepTargetProbabilities,
+                                                                           std::function<uint64_t(uint64_t)> const& stateToScc);
+
+    /*!
      * Computes for each state an upper bound for the maximal expected times each state is visited.
      * @param transitionMatrix The matrix defining the transitions of the system without the transitions
      * that lead directly to the goal state.
