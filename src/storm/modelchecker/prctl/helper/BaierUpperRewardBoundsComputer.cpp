@@ -54,8 +54,8 @@ std::vector<ValueType> BaierUpperRewardBoundsComputer<ValueType>::computeUpperBo
     // A choice is valid iff it goes to non-remaining states with non-zero probability.
     // Initially, mark all choices as valid that have non-zero probability to go to the target states *or* to a different Scc.
     // Todo h beferoe: (no rationalfct)
-    auto validChoices = storm::utility::vector::filterGreaterZero(oneStepTargetProbabilities);
-    // auto validChoices = storm::utility::vector::filter<ValueType>(oneStepTargetProbabilities, [](ValueType const& value) -> bool { return !storm::utility::isZero(value); });
+    //auto validChoices = storm::utility::vector::filterGreaterZero(oneStepTargetProbabilities);
+    auto validChoices = storm::utility::vector::filter<ValueType>(oneStepTargetProbabilities, [](ValueType const& value) -> bool { return !storm::utility::isZero(value); });
 
     for (uint64_t state = 0; state < numStates; ++state) {
         auto const scc = stateToScc(state);
@@ -133,7 +133,6 @@ std::vector<ValueType> BaierUpperRewardBoundsComputer<ValueType>::computeUpperBo
         currentStates.clear();
         std::swap(nextStates, currentStates);
     }
-
     return result;
 }
 
@@ -199,7 +198,7 @@ template class BaierUpperRewardBoundsComputer<double>;
 
 #ifdef STORM_HAVE_CARL
 template class BaierUpperRewardBoundsComputer<storm::RationalNumber>;
-//todo h template class BaierUpperRewardBoundsComputer<storm::RationalFunction>;
+template class BaierUpperRewardBoundsComputer<storm::RationalFunction>;
 #endif
 }  // namespace helper
 }  // namespace modelchecker
