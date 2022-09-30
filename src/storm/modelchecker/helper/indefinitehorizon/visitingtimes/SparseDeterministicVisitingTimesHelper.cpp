@@ -272,8 +272,9 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
     if (isContinuousTime()){
         auto prec = newEnv.solver().getPrecisionOfLinearEquationSolver(newEnv.solver().getLinearEquationSolverType());
         if (prec.first.is_initialized()) {
+            // the precision is relevant (e.g. not the case for elimination, sparselu etc.)
             ValueType min = *std::min_element(_exitRates->begin(), _exitRates->end());
-            STORM_LOG_THROW(!storm::utility::isZero(min), storm::exceptions::InvalidOperationException, "An error occurred during the adjustment of the precision. Min. rate = " <<min);
+            STORM_LOG_THROW(!storm::utility::isZero(min), storm::exceptions::InvalidOperationException, "An error occurred during the adjustment of the precision. Min. rate = " << min);
             newEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(prec.first.get() * storm::utility::convertNumber<storm::RationalNumber>(min)));
         }
     }
@@ -308,21 +309,31 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
         // Sound computations wrt. relative precision:
         // We need to increase the solver's relative precision that is used in an SCC depending on the maximal SCC chain length.
         auto subEnvPrec = subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType());
-            subEnv.solver().setLinearEquationSolverPrecision(
-                static_cast<storm::RationalNumber>(subEnvPrec.first.get() / storm::utility::convertNumber<storm::RationalNumber>(this->_sccDecomposition->getMaxSccDepth())));
+
+            double scale1 = 1-std::pow(1-storm::utility::convertNumber<double>(subEnvPrec.first.get()), 1.0/_sccDecomposition->getMaxSccDepth());
+
+            double scale2 = std::pow(1+storm::utility::convertNumber<double>(subEnvPrec.first.get()), 1.0/_sccDecomposition->getMaxSccDepth())-1;
+            // set new precision to min(scale1, scale2)
+            if (scale1 < scale2) {
+                subEnv.solver().setLinearEquationSolverPrecision(storm::utility::convertNumber<storm::RationalNumber>(scale1));
+            } else {
+                subEnv.solver().setLinearEquationSolverPrecision(storm::utility::convertNumber<storm::RationalNumber>(scale2));
+            }
 
     } else if (needAdaptPrecision && !subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType()).second.get()) {
         // Sound computations wrt. absolute precision:
-        // The adjustment of the precision used in each SCC depends on the maximal SCC chain length,
-        // the maximal number of incoming transitions, and the maximal probability <1 to reach another states in an SCC.
-        if (_sccDecomposition->getMaxSccDepth()>0) {
-            // There is at least on non-bottom SCC
+        if (_sccDecomposition->getMaxSccDepth()>1) {
+            // The chain length exceeds one, we need to adjust the precision
+            // The adjustment of the precision used in each SCC depends on the maximal SCC chain length,
+            // the maximal number of incoming transitions, and the maximal probability <1 to reach another states in an SCC.
 
             storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowCount(), false);
 
             // We need the maximal number of incoming transitions to an SCC.
             uint_fast64_t maxNumInc = 0;
-            // Lastly, we need the maximal recurrence probability (or an upper bound) for the transient states in one SCC (this value stays 0 if there are no cycles)
+            // Lastly, we want 1-p, such that
+            // p is the maximal recurrence probability (or an upper bound)
+            // for the transient states in one SCC (this value stays 0 if there are no cycles)
             ValueType maxRecProb = storm::utility::zero<ValueType>();
 
             auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
@@ -338,7 +349,7 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
 
                     maxNumInc = std::max(maxNumInc, localNumInc);
                     sccAsBitVector.clear();
-                    // Todo Baier exploiting sccs: correct?
+                    // use Baier's method to compute max recurrence probability (maxRecProb)
                     // Build the submatrix that only has the transitions between non-BSCC states.
                     auto subTransitionMatrix = _transitionMatrix.getSubmatrix(false, _nonBsccStates, _nonBsccStates);
                     // Compute the one-step probabilities that lead to states outside the SCC
@@ -359,10 +370,10 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
 
             if (maxNumInc != 0) {
                 // As the maximal number of incoming transitions is greater than one, adjustment is necessary.
-                // For this, we need the length of the longest SCC chain (without BSCCs).
-                for (int i = 1; i <= _sccDecomposition->getMaxSccDepth(); i++) {
+                // For this, we need the number of SCCs in the longest SCC chain -1, i.e., _sccDecomposition->getMaxSccDepth() -1
+                for (int i = 1; i < _sccDecomposition->getMaxSccDepth(); i++) {
                     scale = scale + storm::utility::pow(storm::utility::convertNumber<storm::RationalNumber>(maxNumInc), i) *
-                                        (one / (storm::utility::convertNumber<storm::RationalNumber>(maxRecProb)));
+                                        (one / 1-(storm::utility::convertNumber<storm::RationalNumber>(maxRecProb)));
                 }
             }
             subEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(subEnvPrec.first.get() / scale));
@@ -408,7 +419,7 @@ std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::comput
     // <=> P^T * x + b = x   <- fixpoint system
     // <=> (1-P^T) * x = b   <- equation system
 
-    // TODO We need to check if SVI works on this kind of equation system (OVI and II work)
+    // TODO We need to check if SVI works on this kind of equation system (OVI and II are correct)
     storm::solver::GeneralLinearEquationSolverFactory<ValueType> linearEquationSolverFactory;
     bool isFixpointFormat = linearEquationSolverFactory.getEquationProblemFormat(env) == storm::solver::LinearEquationSolverProblemFormat::FixedPointSystem;
 

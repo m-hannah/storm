@@ -67,7 +67,7 @@ void DeterministicModel<ValueType, RewardModelType>::printModelInformationToStre
     this->printModelInformationHeaderToStream(out);
     this->printModelInformationFooterToStream(out);
 
-    // TODO h: remove this (?)
+    // TODO h: remove this (used for EVTs benchmarking)
     // Compute information about the model's topology:
     // Create auxiliary data and lambdas
     storm::storage::BitVector sccAsBitVector(this->getNumberOfStates(), false);
