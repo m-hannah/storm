@@ -310,18 +310,19 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
         // We need to increase the solver's relative precision that is used in an SCC depending on the maximal SCC chain length.
         auto subEnvPrec = subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType());
 
-            double scale1 = 1-std::pow(1-storm::utility::convertNumber<double>(subEnvPrec.first.get()), 1.0/_sccDecomposition->getMaxSccDepth());
+            double scaledPrecision1 = 1-std::pow(1-storm::utility::convertNumber<double>(subEnvPrec.first.get()), 1.0/_sccDecomposition->getMaxSccDepth());
 
-            double scale2 = std::pow(1+storm::utility::convertNumber<double>(subEnvPrec.first.get()), 1.0/_sccDecomposition->getMaxSccDepth())-1;
+            double scaledPrecision2 = std::pow(1+storm::utility::convertNumber<double>(subEnvPrec.first.get()), 1.0/_sccDecomposition->getMaxSccDepth())-1;
             // set new precision to min(scale1, scale2)
-            if (scale1 < scale2) {
-                subEnv.solver().setLinearEquationSolverPrecision(storm::utility::convertNumber<storm::RationalNumber>(scale1));
+            if (scaledPrecision1 < scaledPrecision2) {
+                subEnv.solver().setLinearEquationSolverPrecision(storm::utility::convertNumber<storm::RationalNumber>(scaledPrecision1));
             } else {
-                subEnv.solver().setLinearEquationSolverPrecision(storm::utility::convertNumber<storm::RationalNumber>(scale2));
+                subEnv.solver().setLinearEquationSolverPrecision(storm::utility::convertNumber<storm::RationalNumber>(scaledPrecision2));
             }
 
     } else if (needAdaptPrecision && !subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType()).second.get()) {
         // Sound computations wrt. absolute precision:
+        // TODO: there os probably a better way to implement this
         if (_sccDecomposition->getMaxSccDepth()>1) {
             // The chain length exceeds one, we need to adjust the precision
             // The adjustment of the precision used in each SCC depends on the maximal SCC chain length,
@@ -331,10 +332,11 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
 
             // We need the maximal number of incoming transitions to an SCC.
             uint_fast64_t maxNumInc = 0;
-            // Lastly, we want 1-p, such that
+            // Lastly, we want 1/(1-p), such that
             // p is the maximal recurrence probability (or an upper bound)
             // for the transient states in one SCC (this value stays 0 if there are no cycles)
-            ValueType maxRecProb = storm::utility::zero<ValueType>();
+            // we can also exploit that the max EVT (Baier) =  1/(1-p)
+            ValueType maxEvts = storm::utility::zero<ValueType>();
 
             auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
             for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
@@ -355,11 +357,11 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
                     // Compute the one-step probabilities that lead to states outside the SCC
                     std::vector<ValueType> leavingTransitions = _transitionMatrix.getConstrainedRowGroupSumVector(_nonBsccStates, ~_nonBsccStates & sccAsBitVector);
 
-                    // Compute the upper bounds on EVTs for non-BSCC states (using the same state-to-scc mapping).
+                    // Compute the upper bounds on recurrence probability for non-BSCC states (using the same state-to-scc mapping).
                     std::vector<ValueType> upperBounds =
-                        storm::modelchecker::helper::BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnRecurrenceProbabilities(subTransitionMatrix,
+                        storm::modelchecker::helper::BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnExpectedVisitingTimes(subTransitionMatrix,
                                                                                                                                            leavingTransitions);
-                    maxRecProb = std::max(maxRecProb, (*std::max_element(upperBounds.begin(), upperBounds.end())));
+                    maxEvts = std::max(maxEvts, (*std::max_element(upperBounds.begin(), upperBounds.end())));
 
                 }
             }
@@ -373,7 +375,8 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
                 // For this, we need the number of SCCs in the longest SCC chain -1, i.e., _sccDecomposition->getMaxSccDepth() -1
                 for (int i = 1; i < _sccDecomposition->getMaxSccDepth(); i++) {
                     scale = scale + storm::utility::pow(storm::utility::convertNumber<storm::RationalNumber>(maxNumInc), i) *
-                                        (one / 1-(storm::utility::convertNumber<storm::RationalNumber>(maxRecProb)));
+                                       storm::utility::convertNumber<storm::RationalNumber>(maxEvts);
+
                 }
             }
             subEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(subEnvPrec.first.get() / scale));
