@@ -104,7 +104,7 @@ void SparseDeterministicVisitingTimesHelper<ValueType>::computeExpectedVisitingT
 
 
     if (env.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Topological) {
-
+        // Compute EVTs SCC wise in topological order
         // We need to adapt precision if we solve each SCC separately (in topological order) and/or consider CTMCs
         auto sccEnv = getEnvironmentForSolver(env, true);
 
@@ -271,7 +271,17 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
     // Adjust precision for CTMCs, because the EVTs are divided by the exit rates at the end.
     if (isContinuousTime()){
         auto prec = newEnv.solver().getPrecisionOfLinearEquationSolver(newEnv.solver().getLinearEquationSolverType());
-        if (prec.first.is_initialized()) {
+
+        bool needAdaptPrecision =
+            env.solver().isForceSoundness() &&
+            prec.first.is_initialized() &&
+            prec.second.is_initialized();
+
+        // Assert that we only adapt the precision for native solvers
+        STORM_LOG_ASSERT(!needAdaptPrecision || subEnv.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Native,
+                         "The precision for the current solver type is not adjusted for this solving method. Ensure that this is correct for topological computation.");
+        
+        if (needAdaptPrecision) {
             // the precision is relevant (e.g. not the case for elimination, sparselu etc.)
             ValueType min = *std::min_element(_exitRates->begin(), _exitRates->end());
             STORM_LOG_THROW(!storm::utility::isZero(min), storm::exceptions::InvalidOperationException, "An error occurred during the adjustment of the precision. Min. rate = " << min);
