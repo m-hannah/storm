@@ -278,9 +278,9 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
             prec.second.is_initialized();
 
         // Assert that we only adapt the precision for native solvers
-        STORM_LOG_ASSERT(!needAdaptPrecision || subEnv.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Native,
+        STORM_LOG_ASSERT(!needAdaptPrecision || env.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Native,
                          "The precision for the current solver type is not adjusted for this solving method. Ensure that this is correct for topological computation.");
-        
+
         if (needAdaptPrecision) {
             // the precision is relevant (e.g. not the case for elimination, sparselu etc.)
             ValueType min = *std::min_element(_exitRates->begin(), _exitRates->end());
