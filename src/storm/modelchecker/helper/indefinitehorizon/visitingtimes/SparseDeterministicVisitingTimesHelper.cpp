@@ -308,7 +308,8 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
     bool needAdaptPrecision =
         env.solver().isForceSoundness() &&
         subEnvPrec.first.is_initialized() &&
-        subEnvPrec.second.is_initialized();
+        subEnvPrec.second.is_initialized() &&
+        storm::utility::graph::hasCycle(_transitionMatrix.getSubmatrix(false, _nonBsccStates, _nonBsccStates)); // singleton sccs are solved directly
 
     // Assert that we only adapt the precision for native solvers
     STORM_LOG_ASSERT(!needAdaptPrecision || subEnv.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Native,
