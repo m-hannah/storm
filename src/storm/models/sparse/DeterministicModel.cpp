@@ -66,7 +66,7 @@ template<typename ValueType, typename RewardModelType>
 void DeterministicModel<ValueType, RewardModelType>::printModelInformationToStream(std::ostream& out) const {
     this->printModelInformationHeaderToStream(out);
     this->printModelInformationFooterToStream(out);
-
+/*
     // TODO h: remove this (only used for EVTs benchmarking)
     // Compute information about the model's topology:
     // Create auxiliary data and lambdas
@@ -118,6 +118,7 @@ void DeterministicModel<ValueType, RewardModelType>::printModelInformationToStre
     out << "# Length of max SCC chain: " << sccDecomposition.getMaxSccDepth() << '\n';
 
     out << "-------------------------------------------------------------- \n";
+    */
 }
 
 
