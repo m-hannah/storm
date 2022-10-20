@@ -67,7 +67,7 @@ void DeterministicModel<ValueType, RewardModelType>::printModelInformationToStre
     this->printModelInformationHeaderToStream(out);
     this->printModelInformationFooterToStream(out);
 
-    // TODO h: remove this (used for EVTs benchmarking)
+    // TODO h: remove this (only used for EVTs benchmarking)
     // Compute information about the model's topology:
     // Create auxiliary data and lambdas
     storm::storage::BitVector sccAsBitVector(this->getNumberOfStates(), false);
@@ -83,6 +83,7 @@ void DeterministicModel<ValueType, RewardModelType>::printModelInformationToStre
     storm::storage::BitVector nonBsccStates = storm::storage::BitVector(this->getNumberOfStates(), false);
     uint64_t numSccs = 0;
     uint64_t maxSccSize = 0;
+    bool acyclic = true;
     for (auto const& scc : sccDecomposition) {
         sccAsBitVector.set(scc.begin(), scc.end(), true);
         if (std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)) {
@@ -91,17 +92,21 @@ void DeterministicModel<ValueType, RewardModelType>::printModelInformationToStre
             // Increase counter for number of non-bottom SCCs
             numSccs ++;
             // Update the maximal number of states in one SCC
-            maxSccSize = std::max(maxSccSize, sccAsBitVector.getNumberOfSetBits());
+            uint64_t sccSize = sccAsBitVector.getNumberOfSetBits();
+            maxSccSize = std::max(maxSccSize, sccSize);
+            if (sccSize >1) { // consider models with SCCs > 1 as acyclic
+                acyclic = false;
+            }
         }
         sccAsBitVector.clear();
     }
 
-    out << "# Topology of the input model without BSCCs: ";
-    if (!nonBsccStates.empty() && storm::utility::graph::hasCycle(this->getTransitionMatrix().getSubmatrix(false, nonBsccStates, nonBsccStates))) {
-        out << "cyclic\n";
+    out << "# Topology of the input model without BSCCs (acyclic = only non-bottom SCCs of size 1): ";
+    if (acyclic) {
+        out << "acyclic\n";
     }
     else {
-        out << "acyclic\n";
+        out << "cyclic\n";
     }
 
     out << "# Number of non-BSCC states: " << (nonBsccStates.getNumberOfSetBits()) << '\n';
