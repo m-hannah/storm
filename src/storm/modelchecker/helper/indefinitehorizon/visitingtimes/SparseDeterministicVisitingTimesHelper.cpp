@@ -305,11 +305,30 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
 
     // To guarantee soundness for OVI, II, SVI we need to increase the precision in each SCC.
     auto subEnvPrec = subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType());
+
+    bool singletonSCCs = false; // true if each SCC is a singleton (self-loops are allowed)
+    storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowCount(), false);
+    auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
+    for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
+        auto const& scc = *sccIt;
+        sccAsBitVector.set(scc.begin(), scc.end(), true);
+        if (sccAsBitVector.isSubsetOf(_nonBsccStates)) {
+            // This is not a BSCC, mark the states correspondingly.
+            if (sccAsBitVector.getNumberOfSetBits() > 1){
+                singletonSCCs = false;
+                break;
+            }
+
+        }
+        sccAsBitVector.clear();
+    }
+
+
     bool needAdaptPrecision =
         env.solver().isForceSoundness() &&
         subEnvPrec.first.is_initialized() &&
         subEnvPrec.second.is_initialized() &&
-        storm::utility::graph::hasCycle(_transitionMatrix.getSubmatrix(false, _nonBsccStates, _nonBsccStates)); // singleton sccs are solved directly
+        !singletonSCCs; // singleton sccs are solved directly
 
     // Assert that we only adapt the precision for native solvers
     STORM_LOG_ASSERT(!needAdaptPrecision || subEnv.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Native,
