@@ -306,7 +306,7 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
     // To guarantee soundness for OVI, II, SVI we need to increase the precision in each SCC.
     auto subEnvPrec = subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType());
 
-    bool singletonSCCs = false; // true if each SCC is a singleton (self-loops are allowed)
+    bool singletonSCCs = true; // true if each SCC is a singleton (self-loops are allowed)
     storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowCount(), false);
     auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
     for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
