@@ -275,7 +275,8 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
         bool needAdaptPrecision =
             env.solver().isForceSoundness() &&
             prec.first.is_initialized() &&
-            prec.second.is_initialized();
+            prec.second.is_initialized() &&
+            !newEnv.solver().getPrecisionOfLinearEquationSolver(newEnv.solver().getLinearEquationSolverType()).second.get(); // only for the absolute criterion
 
         // Assert that we only adapt the precision for native solvers
         STORM_LOG_ASSERT(!needAdaptPrecision || env.solver().getLinearEquationSolverType() == storm::solver::EquationSolverType::Native,
@@ -342,13 +343,9 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
 
             double scaledPrecision1 = 1-std::pow(1-storm::utility::convertNumber<double>(subEnvPrec.first.get()), 1.0/_sccDecomposition->getMaxSccDepth());
 
-            double scaledPrecision2 = std::pow(1+storm::utility::convertNumber<double>(subEnvPrec.first.get()), 1.0/_sccDecomposition->getMaxSccDepth())-1;
-            // set new precision to min(scale1, scale2)
-            if (scaledPrecision1 < scaledPrecision2) {
-                subEnv.solver().setLinearEquationSolverPrecision(storm::utility::convertNumber<storm::RationalNumber>(scaledPrecision1));
-            } else {
-                subEnv.solver().setLinearEquationSolverPrecision(storm::utility::convertNumber<storm::RationalNumber>(scaledPrecision2));
-            }
+            // set new precision
+            subEnv.solver().setLinearEquationSolverPrecision(storm::utility::convertNumber<storm::RationalNumber>(scaledPrecision1));
+
 
     } else if (needAdaptPrecision && !subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType()).second.get()) {
         // Sound computations wrt. absolute precision:
