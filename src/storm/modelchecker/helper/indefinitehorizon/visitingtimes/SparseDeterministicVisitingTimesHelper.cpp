@@ -350,7 +350,9 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
 
     } else if (needAdaptPrecision && !subEnv.solver().getPrecisionOfLinearEquationSolver(subEnv.solver().getLinearEquationSolverType()).second.get()) {
         // Sound computations wrt. absolute precision:
-        // TODO: there os probably a better way to implement this
+        //STORM_LOG_THROW(false, storm::exceptions::NotSupportedException, "Sound computations of EVTs wrt. absolute precision is not supported.");
+
+        // TODO: there is probably a better way to implement this
         if (_sccDecomposition->getMaxSccDepth()>1) {
             // The chain length exceeds one, we need to adjust the precision
             // The adjustment of the precision used in each SCC depends on the maximal SCC chain length,
@@ -358,13 +360,11 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
 
             storm::storage::BitVector sccAsBitVector(_transitionMatrix.getRowCount(), false);
 
-            // We need the maximal number of incoming transitions to an SCC.
+            // maxNumInc: the maximal number of incoming transitions to an SCC.
             uint_fast64_t maxNumInc = 0;
-            // Lastly, we want 1/(1-p), such that
-            // p is the maximal recurrence probability (or an upper bound)
-            // for the transient states in one SCC (this value stays 0 if there are no cycles)
-            // we can also exploit that the max EVT (Baier) =  1/(1-p)
-            ValueType maxEvts = storm::utility::zero<ValueType>();
+
+            // maxEVT: the maximal value of 1/(1-p), where p is the recurrence probability within an SCC (this value stays 0 if there are no cycles)
+            ValueType boundEVT = storm::utility::zero<ValueType>();
 
             auto sccItEnd = std::make_reverse_iterator(_sccDecomposition->begin());
             for (auto sccIt = std::make_reverse_iterator(_sccDecomposition->end()); sccIt != sccItEnd; ++sccIt) {
@@ -372,28 +372,21 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
                 sccAsBitVector.set(scc.begin(), scc.end(), true);
                 if (sccAsBitVector.isSubsetOf(_nonBsccStates)) {
                     // This is NOT a BSCC.
+
                     // Get number of incoming transitions to this scc (from different sccs)
                     auto toSccMatrix = _transitionMatrix.getSubmatrix(false, ~sccAsBitVector, sccAsBitVector);
                     uint_fast64_t localNumInc =
                         std::count_if(toSccMatrix.begin(), toSccMatrix.end(), [](auto const& e) { return !storm::utility::isZero(e.getValue()); });
-
                     maxNumInc = std::max(maxNumInc, localNumInc);
+
+                    // Compute the upper bounds on 1/(1-p) within the SCC
+                    // p is the maximal recurrence probability, i.e., 1/(1-p) is an upperBound on the EVTs of the DTMC restricted to the SCC (Baier)
+                    std::vector<ValueType> upperBounds = computeUpperBounds(sccAsBitVector);
+                    boundEVT = std::max(boundEVT, (*std::max_element(upperBounds.begin(), upperBounds.end())));
+
                     sccAsBitVector.clear();
-                    // use Baier's method to compute max recurrence probability (maxRecProb)
-                    // Build the submatrix that only has the transitions between non-BSCC states.
-                    auto subTransitionMatrix = _transitionMatrix.getSubmatrix(false, _nonBsccStates, _nonBsccStates);
-                    // Compute the one-step probabilities that lead to states outside the SCC
-                    std::vector<ValueType> leavingTransitions = _transitionMatrix.getConstrainedRowGroupSumVector(_nonBsccStates, ~_nonBsccStates & sccAsBitVector);
-
-                    // Compute the upper bounds on recurrence probability for non-BSCC states (using the same state-to-scc mapping).
-                    std::vector<ValueType> upperBounds =
-                        storm::modelchecker::helper::BaierUpperRewardBoundsComputer<ValueType>::computeUpperBoundOnExpectedVisitingTimes(subTransitionMatrix,
-                                                                                                                                           leavingTransitions);
-                    maxEvts = std::max(maxEvts, (*std::max_element(upperBounds.begin(), upperBounds.end())));
-
                 }
             }
-
 
             storm::RationalNumber one = storm::RationalNumber(1);
             storm::RationalNumber scale = one;
@@ -403,12 +396,13 @@ storm::Environment SparseDeterministicVisitingTimesHelper<ValueType>::getEnviron
                 // For this, we need the number of SCCs in the longest SCC chain -1, i.e., _sccDecomposition->getMaxSccDepth() -1
                 for (int i = 1; i < _sccDecomposition->getMaxSccDepth(); i++) {
                     scale = scale + storm::utility::pow(storm::utility::convertNumber<storm::RationalNumber>(maxNumInc), i) *
-                                       storm::utility::convertNumber<storm::RationalNumber>(maxEvts);
+                                       storm::utility::convertNumber<storm::RationalNumber>(boundEVT);
 
                 }
             }
             subEnv.solver().setLinearEquationSolverPrecision(static_cast<storm::RationalNumber>(subEnvPrec.first.get() / scale));
         }
+
     }
 
     return subEnv;
@@ -496,11 +490,9 @@ std::vector<ValueType> SparseDeterministicVisitingTimesHelper<ValueType>::comput
     return eqSysValues;
 }
 
-
 template class SparseDeterministicVisitingTimesHelper<double>;
 template class SparseDeterministicVisitingTimesHelper<storm::RationalNumber>;
 template class SparseDeterministicVisitingTimesHelper<storm::RationalFunction>;
-
 }  // namespace helper
 }  // namespace modelchecker
 }  // namespace storm
