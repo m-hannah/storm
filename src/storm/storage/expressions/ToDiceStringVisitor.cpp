@@ -4,7 +4,7 @@
 
 namespace storm {
 namespace expressions {
-ToDiceStringVisitor::ToDiceStringVisitor(uint64 nrBits) : nrBits(nrBits) {}
+ToDiceStringVisitor::ToDiceStringVisitor(uint64_t nrBits) : nrBits(nrBits) {}
 
 std::string ToDiceStringVisitor::toString(Expression const& expression) {
     return toString(expression.getBaseExpressionPointer().get());
@@ -150,42 +150,42 @@ boost::any ToDiceStringVisitor::visit(BinaryNumericalFunctionExpression const& e
 
 boost::any ToDiceStringVisitor::visit(BinaryRelationExpression const& expression, boost::any const& data) {
     switch (expression.getRelationType()) {
-        case BinaryRelationExpression::RelationType::Equal:
+        case RelationType::Equal:
             stream << "(";
             expression.getFirstOperand()->accept(*this, data);
             stream << "==";
             expression.getSecondOperand()->accept(*this, data);
             stream << ")";
             break;
-        case BinaryRelationExpression::RelationType::NotEqual:
+        case RelationType::NotEqual:
             stream << "(";
             expression.getFirstOperand()->accept(*this, data);
             stream << "!=";
             expression.getSecondOperand()->accept(*this, data);
             stream << ")";
             break;
-        case BinaryRelationExpression::RelationType::Less:
+        case RelationType::Less:
             stream << "(";
             expression.getFirstOperand()->accept(*this, data);
             stream << "<";
             expression.getSecondOperand()->accept(*this, data);
             stream << ")";
             break;
-        case BinaryRelationExpression::RelationType::LessOrEqual:
+        case RelationType::LessOrEqual:
             stream << "(";
             expression.getFirstOperand()->accept(*this, data);
             stream << "<=";
             expression.getSecondOperand()->accept(*this, data);
             stream << ")";
             break;
-        case BinaryRelationExpression::RelationType::Greater:
+        case RelationType::Greater:
             stream << "(";
             expression.getFirstOperand()->accept(*this, data);
             stream << ">";
             expression.getSecondOperand()->accept(*this, data);
             stream << ")";
             break;
-        case BinaryRelationExpression::RelationType::GreaterOrEqual:
+        case RelationType::GreaterOrEqual:
             stream << "(";
             expression.getFirstOperand()->accept(*this, data);
             stream << ">=";

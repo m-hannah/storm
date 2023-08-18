@@ -28,6 +28,9 @@ class BaierUpperRewardBoundsComputer {
      */
     BaierUpperRewardBoundsComputer(storm::storage::SparseMatrix<ValueType> const& transitionMatrix, std::vector<ValueType> const& rewards,
                                    std::vector<ValueType> const& oneStepTargetProbabilities, std::function<uint64_t(uint64_t)> const& stateToScc = {});
+    BaierUpperRewardBoundsComputer(storm::storage::SparseMatrix<ValueType> const& transitionMatrix,
+                                   storm::storage::SparseMatrix<ValueType> const& backwardTransitions, std::vector<ValueType> const& rewards,
+                                   std::vector<ValueType> const& oneStepTargetProbabilities, std::function<uint64_t(uint64_t)> const& stateToScc = {});
 
     /*!
      * Computes an upper bound on the expected rewards.
@@ -60,9 +63,16 @@ class BaierUpperRewardBoundsComputer {
      * @param transitionMatrix The matrix defining the transitions of the system without the transitions
      * that lead directly to the goal state.
      * @param oneStepTargetProbabilities For each choice the probability to go to a goal state in one step.
+     * @param isMecCollapsingAllowedForChoice if a function is given, we allow to collapse MECs that only consist of choices where the given function returns
+     * true. The interpretation of the returned values for states of such MECs is that visits of states that happen directly after a mec choice do not count.
      */
     static std::vector<ValueType> computeUpperBoundOnExpectedVisitingTimes(storm::storage::SparseMatrix<ValueType> const& transitionMatrix,
-                                                                           std::vector<ValueType> const& oneStepTargetProbabilities);
+                                                                           storm::storage::SparseMatrix<ValueType> const& backwardTransitions,
+                                                                           std::vector<ValueType> const& oneStepTargetProbabilities,
+                                                                           std::function<bool(uint64_t)> const& isMecCollapsingAllowedForChoice = {});
+    static std::vector<ValueType> computeUpperBoundOnExpectedVisitingTimes(storm::storage::SparseMatrix<ValueType> const& transitionMatrix,
+                                                                           std::vector<ValueType> const& oneStepTargetProbabilities,
+                                                                           std::function<bool(uint64_t)> const& isMecCollapsingAllowedForChoice = {});
 
     /*!
      * Computes for each state an upper bound for the maximal expected times each state is visited.
@@ -70,13 +80,18 @@ class BaierUpperRewardBoundsComputer {
      * that lead directly to the goal state.
      * @param oneStepTargetProbabilities For each choice the probability to go to a goal state in one step.
      * @param stateToScc Returns the SCC index for each state
+     * @param isMecCollapsingAllowedForChoice if a function is given, we allow to collapse MECs that only consist of choices where the given function returns
+     * true. The interpretation of the returned values for states of such MECs is that visits of states that happen directly after a mec choice do not count.
      */
     static std::vector<ValueType> computeUpperBoundOnExpectedVisitingTimes(storm::storage::SparseMatrix<ValueType> const& transitionMatrix,
+                                                                           storm::storage::SparseMatrix<ValueType> const& backwardTransitions,
                                                                            std::vector<ValueType> const& oneStepTargetProbabilities,
-                                                                           std::function<uint64_t(uint64_t)> const& stateToScc);
+                                                                           std::function<uint64_t(uint64_t)> const& stateToScc,
+                                                                           std::function<bool(uint64_t)> const& isMecCollapsingAllowedForChoice = {});
 
    private:
     storm::storage::SparseMatrix<ValueType> const& _transitionMatrix;
+    storm::storage::SparseMatrix<ValueType> const* _backwardTransitions;
     std::function<uint64_t(uint64_t)> _stateToScc;
     std::vector<ValueType> const& _rewards;
     std::vector<ValueType> const& _oneStepTargetProbabilities;

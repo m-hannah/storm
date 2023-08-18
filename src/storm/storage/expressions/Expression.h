@@ -1,12 +1,14 @@
 #ifndef STORM_STORAGE_EXPRESSIONS_EXPRESSION_H_
 #define STORM_STORAGE_EXPRESSIONS_EXPRESSION_H_
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <unordered_map>
 #include <vector>
 
 #include "storm/storage/expressions/BaseExpression.h"
+#include "storm/storage/expressions/BinaryRelationExpression.h"
 #include "storm/utility/OsDetection.h"
 
 namespace storm {
@@ -463,7 +465,7 @@ Expression apply(std::vector<storm::expressions::Expression> const& expressions,
                  std::function<Expression(Expression const&, Expression const&)> const& function);
 Expression applyAssociative(std::vector<storm::expressions::Expression> const& expressions,
                             std::function<Expression(Expression const&, Expression const&)> const& function);
-
+Expression makeBinaryRelationExpression(Expression const& lhs, Expression const& rhs, RelationType const& reltype);
 }  // namespace expressions
 }  // namespace storm
 

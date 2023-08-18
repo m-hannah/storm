@@ -1,12 +1,12 @@
 #pragma once
+
 #include <memory>
 
 #include "storm/exceptions/NotImplementedException.h"
 #include "storm/utility/constants.h"
 #include "storm/utility/macros.h"
 
-namespace storm {
-
+namespace storm::dft {
 namespace builder {
 
 /*!
@@ -169,4 +169,4 @@ class DFTExplorationHeuristicBoundDifference : public DFTExplorationHeuristicPro
 };
 
 }  // namespace builder
-}  // namespace storm
+}  // namespace storm::dft

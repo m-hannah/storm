@@ -1,8 +1,9 @@
 #include "SparseLTLSchedulerHelper.h"
+#include "storm/storage/SchedulerChoice.h"
+#include "storm/storage/dd/sylvan/InternalSylvanBdd.h"
 #include "storm/storage/memorystructure/MemoryStructure.h"
 #include "storm/storage/memorystructure/MemoryStructureBuilder.h"
 #include "storm/transformer/DAProductBuilder.h"
-
 #include "storm/utility/graph.h"
 
 namespace storm {
@@ -164,7 +165,7 @@ void SparseLTLSchedulerHelper<ValueType, Nondeterministic>::prepareScheduler(uin
     STORM_LOG_ASSERT(_infSets.size() > 0, "There is no inf set. Were the accepting ECs processed before?");
 
     // Compute size of the resulting memory structure: A state <q, infSet> is encoded as (q* (|infSets|))+ |infSet|
-    uint64 numMemoryStates = (numDaStates) * (_infSets.size());
+    uint64_t numMemoryStates = (numDaStates) * (_infSets.size());
     _dontCareStates = std::vector<storm::storage::BitVector>(numMemoryStates, storm::storage::BitVector(transitionMatrix.getRowGroupCount(), false));
 
     // Set choices for states or consider them "dontCare"

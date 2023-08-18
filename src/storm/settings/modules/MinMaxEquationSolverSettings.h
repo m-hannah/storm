@@ -95,18 +95,26 @@ class MinMaxEquationSolverSettings : public ModuleSettings {
      */
     bool isForceIntervalIterationSymmetricUpdatesSet() const;
 
+    bool isForceUniqueSolutionRequirementSet() const;
+    /*!
+     * Retrieves whether only initial states should occur in the optimization objective.
+     */
+    bool getLpUseOnlyInitialStateAsObjective() const;
+    /*!
+     * Retrieves whether additional bounds should be used when constructing the LP.
+     */
+    bool getLpUseNonTrivialBounds() const;
+    /*!
+     * Retrieves whether equality should be enforced where possible
+     */
+    bool getLpUseEqualityForTrivialActions() const;
+    /*!
+     * Retrieves whether feasibility queries for a min/maxequation solver should use an optimization objective.
+     */
+    bool getLpOptimizeFeasibilityQueries() const;
+
     // The name of the module.
     static const std::string moduleName;
-
-   private:
-    static const std::string solvingMethodOptionName;
-    static const std::string maximalIterationsOptionName;
-    static const std::string maximalIterationsOptionShortName;
-    static const std::string precisionOptionName;
-    static const std::string absoluteOptionName;
-    static const std::string valueIterationMultiplicationStyleOptionName;
-    static const std::string intervalIterationSymmetricUpdatesOptionName;
-    static const std::string forceBoundsOptionName;
 };
 
 }  // namespace modules

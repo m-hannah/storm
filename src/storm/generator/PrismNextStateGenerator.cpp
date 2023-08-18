@@ -3,21 +3,26 @@
 #include <boost/any.hpp>
 #include <boost/container/flat_map.hpp>
 
+#include "storm/adapters/JsonAdapter.h"
+#include "storm/adapters/RationalFunctionAdapter.h"
 #include "storm/models/sparse/StateLabeling.h"
 
 #include "storm/storage/expressions/SimpleValuation.h"
 #include "storm/storage/sparse/PrismChoiceOrigins.h"
 
-#include "storm/builder/jit/Distribution.h"
+#include "storm/generator/Distribution.h"
 
 #include "storm/solver/SmtSolver.h"
 
 #include "storm/exceptions/InvalidArgumentException.h"
 #include "storm/exceptions/UnexpectedException.h"
 #include "storm/exceptions/WrongFormatException.h"
+#include "storm/storage/expressions/ExpressionEvaluator.h"
 #include "storm/utility/combinatorics.h"
 #include "storm/utility/constants.h"
 #include "storm/utility/macros.h"
+
+#include "storm/utility/vector.h"
 
 namespace storm {
 namespace generator {
@@ -675,7 +680,7 @@ template<typename ValueType, typename StateType>
 void PrismNextStateGenerator<ValueType, StateType>::generateSynchronizedDistribution(
     storm::storage::BitVector const& state, ValueType const& probability, uint64_t position,
     std::vector<std::vector<std::reference_wrapper<storm::prism::Command const>>::const_iterator> const& iteratorList,
-    storm::builder::jit::Distribution<StateType, ValueType>& distribution, StateToIdCallback stateToIdCallback) {
+    storm::generator::Distribution<StateType, ValueType>& distribution, StateToIdCallback stateToIdCallback) {
     if (storm::utility::isZero<ValueType>(probability)) {
         return;
     }
@@ -715,7 +720,7 @@ void PrismNextStateGenerator<ValueType, StateType>::addSynchronousChoices(std::v
                 iteratorList[i] = activeCommandList[i].cbegin();
             }
 
-            storm::builder::jit::Distribution<StateType, ValueType> distribution;
+            storm::generator::Distribution<StateType, ValueType> distribution;
 
             // As long as there is one feasible combination of commands, keep on expanding it.
             bool done = false;

@@ -6,12 +6,12 @@
 namespace storm {
 namespace solver {
 ExtendEnumsWithSelectionField(MinMaxMethod, ValueIteration, PolicyIteration, LinearProgramming, Topological, RationalSearch, IntervalIteration,
-                              SoundValueIteration, OptimisticValueIteration, TopologicalCuda, ViToPi, Acyclic)
+                              SoundValueIteration, OptimisticValueIteration, TopologicalCuda, ViToPi, ViToLp, Acyclic)
     ExtendEnumsWithSelectionField(MultiplierType, Native, Gmmxx) ExtendEnumsWithSelectionField(GameMethod, PolicyIteration, ValueIteration)
         ExtendEnumsWithSelectionField(LraMethod, LinearProgramming, ValueIteration, GainBiasEquations, LraDistributionEquations)
             ExtendEnumsWithSelectionField(MaBoundedReachabilityMethod, Imca, UnifPlus)
 
-                ExtendEnumsWithSelectionField(LpSolverType, Gurobi, Glpk, Z3)
+                ExtendEnumsWithSelectionField(LpSolverType, Gurobi, Glpk, Z3, Soplex)
                     ExtendEnumsWithSelectionField(EquationSolverType, Native, Gmmxx, Eigen, Elimination, Topological, Acyclic)
                         ExtendEnumsWithSelectionField(SmtSolverType, Z3, Mathsat)
 

@@ -17,6 +17,7 @@
 #include "storm/solver/MinMaxLinearEquationSolver.h"
 #include "storm/solver/multiplier/Multiplier.h"
 #include "storm/storage/MaximalEndComponentDecomposition.h"
+#include "storm/storage/SchedulerChoice.h"
 #include "storm/storage/StronglyConnectedComponentDecomposition.h"
 #include "storm/storage/expressions/Expression.h"
 #include "storm/storage/expressions/Variable.h"
@@ -472,7 +473,7 @@ class UnifPlusHelper {
                                                                               storm::storage::BitVector const& targetStateConstraint) const {
         auto denseResult = transitionMatrix.getConstrainedRowGroupSumVector(sourceStateConstraint, targetStateConstraint);
         std::vector<std::pair<uint64_t, ValueType>> sparseResult;
-        for (uint64 i = 0; i < denseResult.size(); ++i) {
+        for (uint64_t i = 0; i < denseResult.size(); ++i) {
             auto const& val = denseResult[i];
             if (!storm::utility::isZero(val)) {
                 sparseResult.emplace_back(i, val);
@@ -743,7 +744,7 @@ MDPSparseModelCheckingHelperReturnType<ValueType> SparseMarkovAutomatonCslHelper
         stateRewardWeights[markovianState] = storm::utility::one<ValueType>() / exitRateVector[markovianState];
     }
     std::vector<ValueType> totalRewardVector = rewardModel.getTotalActionRewardVector(transitionMatrix, stateRewardWeights);
-    RewardModelType scaledRewardModel(boost::none, std::move(totalRewardVector));
+    RewardModelType scaledRewardModel(std::nullopt, std::move(totalRewardVector));
 
     return SparseMdpPrctlHelper<ValueType>::computeTotalRewards(env, dir, transitionMatrix, backwardTransitions, scaledRewardModel, false, produceScheduler);
 }
@@ -759,7 +760,7 @@ MDPSparseModelCheckingHelperReturnType<ValueType> SparseMarkovAutomatonCslHelper
         stateRewardWeights[markovianState] = storm::utility::one<ValueType>() / exitRateVector[markovianState];
     }
     std::vector<ValueType> totalRewardVector = rewardModel.getTotalActionRewardVector(transitionMatrix, stateRewardWeights);
-    RewardModelType scaledRewardModel(boost::none, std::move(totalRewardVector));
+    RewardModelType scaledRewardModel(std::nullopt, std::move(totalRewardVector));
 
     return SparseMdpPrctlHelper<ValueType>::computeReachabilityRewards(env, dir, transitionMatrix, backwardTransitions, scaledRewardModel, psiStates, false,
                                                                        produceScheduler);
@@ -775,7 +776,7 @@ MDPSparseModelCheckingHelperReturnType<ValueType> SparseMarkovAutomatonCslHelper
     for (auto const markovianState : markovianStates) {
         rewardValues[transitionMatrix.getRowGroupIndices()[markovianState]] = storm::utility::one<ValueType>() / exitRateVector[markovianState];
     }
-    storm::models::sparse::StandardRewardModel<ValueType> rewardModel(boost::none, std::move(rewardValues));
+    storm::models::sparse::StandardRewardModel<ValueType> rewardModel(std::nullopt, std::move(rewardValues));
 
     return SparseMdpPrctlHelper<ValueType>::computeReachabilityRewards(env, dir, transitionMatrix, backwardTransitions, rewardModel, psiStates, false,
                                                                        produceScheduler);

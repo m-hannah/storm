@@ -1,5 +1,6 @@
 #include "storm/utility/ConstantsComparator.h"
 
+#include "storm/adapters/RationalFunctionAdapter.h"
 #include "storm/storage/sparse/StateType.h"
 
 #include "storm/settings/SettingsManager.h"
@@ -93,7 +94,6 @@ bool ConstantsComparator<ValueType, ConstantsComparatorEnablePrecision<ValueType
 
 // Explicit instantiations.
 template class ConstantsComparator<double>;
-template class ConstantsComparator<float>;
 template class ConstantsComparator<int>;
 template class ConstantsComparator<storm::storage::sparse::state_type>;
 

@@ -12,6 +12,7 @@
 #include "storm/utility/constants.h"
 #include "storm/utility/macros.h"
 #include "storm/utility/SignalHandler.h"
+#include "storm/utility/vector.h"
 
 namespace storm {
     namespace builder {
@@ -199,7 +200,7 @@ namespace storm {
         }
 
         template<typename PomdpType, typename BeliefValueType>
-        void BeliefMdpExplorer<PomdpType, BeliefValueType>::computeRewardAtCurrentState(uint64 const &localActionIndex, ValueType extraReward) {
+        void BeliefMdpExplorer<PomdpType, BeliefValueType>::computeRewardAtCurrentState(uint64_t const &localActionIndex, ValueType extraReward) {
             STORM_LOG_ASSERT(status == Status::Exploring, "Method call is invalid in current status.");
             if (getCurrentNumberOfMdpChoices() > mdpActionRewards.size()) {
                 mdpActionRewards.resize(getCurrentNumberOfMdpChoices(), storm::utility::zero<ValueType>());
@@ -380,7 +381,7 @@ namespace storm {
             if (!mdpActionRewards.empty()) {
                 mdpActionRewards.resize(getCurrentNumberOfMdpChoices(), storm::utility::zero<ValueType>());
                 mdpRewardModels.emplace("default",
-                                        storm::models::sparse::StandardRewardModel<ValueType>(boost::optional<std::vector<ValueType>>(), std::move(mdpActionRewards)));
+                                        storm::models::sparse::StandardRewardModel<ValueType>(std::optional<std::vector<ValueType>>(), std::move(mdpActionRewards)));
             }
 
             // Create model components

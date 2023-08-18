@@ -46,22 +46,42 @@ list(APPEND STORM_DEP_TARGETS gmm)
 ##
 #############################################################
 
-# Checkout Eigen version 3.3.9
-message (STATUS "Storm - Including Eigen 3.3.9.")
-ExternalProject_Add(
-        eigen_src
-        GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
-		GIT_SHALLOW 1
-        GIT_TAG 0fd6b4f71dd85b2009ee4d1aeb296e2c11fc9d68
-        SOURCE_DIR ${STORM_3RDPARTY_INCLUDE_DIR}/StormEigen
-        PREFIX ${STORM_3RDPARTY_BINARY_DIR}/StormEigen-3.3.9
-		PATCH_COMMAND git apply ${STORM_3RDPARTY_SOURCE_DIR}/patches/eigen.patch
-        UPDATE_COMMAND ""
-        CONFIGURE_COMMAND ""
-        BUILD_COMMAND ""
-        INSTALL_COMMAND ""
-        LOG_INSTALL ON
-)
+# Checkout Eigen 
+# Version 3.3.9 has a known issue when compiled on Apple Silicon (FullPivLU segfaults, relevant for multi-obj model checking).
+# Version 3.4.0 has issues with gcc https://github.com/moves-rwth/storm/issues/162
+# We use this as a workaround:
+if (APPLE_SILICON)
+	message (STATUS "Storm - Including Eigen 3.4.0 commit b0eded878d5d162d61583a286c0d8a45406ad1bc.")
+	ExternalProject_Add(
+	        eigen_src
+	        GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+	        GIT_TAG b0eded878d5d162d61583a286c0d8a45406ad1bc
+	        SOURCE_DIR ${STORM_3RDPARTY_INCLUDE_DIR}/StormEigen
+	        PREFIX ${STORM_3RDPARTY_BINARY_DIR}/StormEigen-3.4.0
+			PATCH_COMMAND git apply ${STORM_3RDPARTY_SOURCE_DIR}/patches/eigen340.patch
+	        UPDATE_COMMAND ""
+	        CONFIGURE_COMMAND ""
+	        BUILD_COMMAND ""
+	        INSTALL_COMMAND ""
+	        LOG_INSTALL ON
+	)
+else()
+	message (STATUS "Storm - Including Eigen 3.3.9.")
+	ExternalProject_Add(
+	        eigen_src
+	        GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+			GIT_SHALLOW 1
+	        GIT_TAG 0fd6b4f71dd85b2009ee4d1aeb296e2c11fc9d68
+	        SOURCE_DIR ${STORM_3RDPARTY_INCLUDE_DIR}/StormEigen
+	        PREFIX ${STORM_3RDPARTY_BINARY_DIR}/StormEigen-3.3.9
+			PATCH_COMMAND git apply ${STORM_3RDPARTY_SOURCE_DIR}/patches/eigen339.patch
+	        UPDATE_COMMAND ""
+	        CONFIGURE_COMMAND ""
+	        BUILD_COMMAND ""
+	        INSTALL_COMMAND ""
+	        LOG_INSTALL ON
+	)
+endif()
 add_imported_library_interface(StormEigen "${STORM_3RDPARTY_INCLUDE_DIR}/StormEigen")
 list(APPEND STORM_DEP_TARGETS StormEigen)
 add_dependencies(StormEigen eigen_src)
@@ -80,10 +100,10 @@ set(Boost_USE_MULTITHREADED ON)
 set(Boost_USE_STATIC_RUNTIME OFF)
 set(Boost_NO_BOOST_CMAKE ON)
 
-find_package(Boost 1.61.0 QUIET REQUIRED COMPONENTS filesystem system)
+find_package(Boost 1.65.1 QUIET REQUIRED COMPONENTS filesystem system)
 if (NOT Boost_FOUND)
     if (Boost_VERSION)
-	message(FATAL_ERROR "The required Boost version is 1.61.0 or newer, however, only ${Boost_VERSION} was found.")
+	message(FATAL_ERROR "The required Boost version is 1.65.1 or newer, however, only ${Boost_VERSION} was found.")
     else ()
    	message(FATAL_ERROR "Boost was not found.")
     endif ()
@@ -91,6 +111,11 @@ endif ()
 if ((NOT Boost_LIBRARY_DIRS) OR ("${Boost_LIBRARY_DIRS}" STREQUAL ""))
     set(Boost_LIBRARY_DIRS "${Boost_INCLUDE_DIRS}/stage/lib")
 endif ()
+
+if ("${Boost_VERSION}" STREQUAL "108100")
+    message(STATUS "Storm - Using workaround for Boost 1.81")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DBOOST_PHOENIX_STL_TUPLE_H_")
+endif()
 
 set(CNTVAR 1)
 foreach(BOOSTLIB ${Boost_LIBRARIES})
@@ -149,7 +174,7 @@ endforeach()
 #############################################################
 
 # Use the shipped version of cpphoafparser
-message (STATUS "storm - Including cpphoafparser 0.99.2")
+message (STATUS "Storm - Including cpphoafparser 0.99.2")
 include_directories("${PROJECT_SOURCE_DIR}/resources/3rdparty/cpphoafparser-0.99.2/include")
 
 #############################################################
@@ -191,19 +216,25 @@ if(Z3_FOUND)
         list(GET Z3_VERSION_LIST 1 STORM_Z3_VERSION_MINOR)
         list(GET Z3_VERSION_LIST 2 STORM_Z3_VERSION_PATCH)
 
-        # Check whether the version of z3 supports optimization
-        if(NOT "${Z3_VERSION}" VERSION_LESS "4.5.0")
-            set(STORM_HAVE_Z3_OPTIMIZE ON)
-            message (STATUS "Storm - Linking with Z3 (version ${Z3_VERSION}). (Z3 version supports optimization)")
+        if ("${Z3_VERSION}" VERSION_EQUAL "4.10.1")
+            message (WARNING "Storm cannot be linked against Z3 version 4.10.1, see issue 252.")
+            message(WARNING "Storm - Could not link with z3. Building of Prism/JANI models will not be supported.")
+            set(Z3_FOUND FALSE)
         else()
-            message (STATUS "Storm - Linking with Z3 (version ${Z3_VERSION}). (Z3 version does not support optimization)")
-        endif()
-        if (NOT "${Z3_VERSION}" VERSION_LESS "4.7.1")
-            set(STORM_Z3_API_USES_STANDARD_INTEGERS ON)
-        endif()
+            # Check whether the version of z3 supports optimization
+            if(NOT "${Z3_VERSION}" VERSION_LESS "4.5.0")
+                set(STORM_HAVE_Z3_OPTIMIZE ON)
+                message (STATUS "Storm - Linking with Z3 (version ${Z3_VERSION}). (Z3 version supports optimization)")
+            else()
+                message (STATUS "Storm - Linking with Z3 (version ${Z3_VERSION}). (Z3 version does not support optimization)")
+            endif()
+            if (NOT "${Z3_VERSION}" VERSION_LESS "4.7.1")
+                set(STORM_Z3_API_USES_STANDARD_INTEGERS ON)
+            endif()
 
-        add_imported_library(Z3 SHARED ${Z3_LIBRARIES} ${Z3_INCLUDE_DIRS})
-        list(APPEND STORM_DEP_TARGETS Z3_SHARED)
+            add_imported_library(Z3 SHARED ${Z3_LIBRARIES} ${Z3_INCLUDE_DIRS})
+            list(APPEND STORM_DEP_TARGETS Z3_SHARED)
+        endif()
     else()
         message(WARNING "Storm - Could not obtain Z3 version. Building of Prism/JANI models will not be supported.")
         set(Z3_FOUND FALSE)
@@ -263,7 +294,7 @@ include(${STORM_3RDPARTY_SOURCE_DIR}/include_cudd.cmake)
 #############################################################
 
 set(STORM_HAVE_CARL OFF)
-set(CARL_MINVERSION "17.12")
+set(CARL_MINVERSION "14.22")
 set(CARL_C14VERSION "14")
 if (NOT STORM_FORCE_SHIPPED_CARL)
     if (NOT "${STORM_CARL_DIR_HINT}" STREQUAL "")
@@ -295,10 +326,13 @@ if(carl_FOUND AND NOT STORM_FORCE_SHIPPED_CARL)
         endif()
     endif()
     if("${carl_VERSION_MAJOR}" STREQUAL "${CARL_C14VERSION}")
-        message(STATUS "Storm - Found carl using master14 branch.")
+        message(STATUS "Storm - Found carl-storm version")
         # empty on purpose. Maybe put a warning here?
-    elseif("${carl_VERSION_MAJOR}.${carl_VERSION_MINOR}" VERSION_LESS "${CARL_MINVERSION}")
-        message(FATAL_ERROR "Carl outdated, require ${CARL_MINVERSION}, have ${carl_VERSION}")
+        if("${carl_VERSION_MAJOR}.${carl_VERSION_MINOR}" VERSION_LESS "${CARL_MINVERSION}")
+            message(FATAL_ERROR "Carl version outdated. We require ${CARL_MINVERSION}")
+        endif()
+    else()
+        message(FATAL_ERROR "We only support a diverged fork of carl -- Version 14.")
     endif()
 
     set(STORM_HAVE_CARL ON)
@@ -315,7 +349,7 @@ if (STORM_SHIPPED_CARL)
 	message(STATUS "Carl - Start of config process")
 	file(MAKE_DIRECTORY ${STORM_3RDPARTY_BINARY_DIR}/carl_download)
 	execute_process(
-	COMMAND ${CMAKE_COMMAND} ${STORM_3RDPARTY_SOURCE_DIR}/carl "-DSTORM_3RDPARTY_BINARY_DIR=${STORM_3RDPARTY_BINARY_DIR}" "-DBoost_LIBRARY_DIRS=${Boost_LIBRARY_DIRS}" "-DBoost_INCLUDE_DIRS=${Boost_INCLUDE_DIRS}"
+	COMMAND ${CMAKE_COMMAND} ${STORM_3RDPARTY_SOURCE_DIR}/carl "-DSTORM_3RDPARTY_BINARY_DIR=${STORM_3RDPARTY_BINARY_DIR}" "-DBoost_LIBRARY_DIRS=${Boost_LIBRARY_DIRS}" "-DBoost_INCLUDE_DIRS=${Boost_INCLUDE_DIRS}" "-DUse_CLN_NUMBERS=${SHIPPED_CARL_USE_CLN_NUMBERS}" "-DUse_GINAC=${SHIPPED_CARL_USE_GINAC}"
 	WORKING_DIRECTORY ${STORM_3RDPARTY_BINARY_DIR}/carl_download
 	OUTPUT_VARIABLE carlconfig_out
 	RESULT_VARIABLE carlconfig_result)
@@ -365,6 +399,18 @@ if (STORM_SHIPPED_CARL)
     else()
         install(FILES ${STORM_3RDPARTY_BINARY_DIR}/carl/lib/libcarl${DYNAMIC_EXT}.${carl_VERSION} DESTINATION lib)
     endif()
+endif()
+
+if("${carl_VERSION_MAJOR}.${carl_VERSION_MINOR}" VERSION_EQUAL "14.22")
+    # This version is too old for forward declarations and updating requires moving the git,
+    # so we warn users but start warning them now.
+    set(STORM_CARL_SUPPORTS_FWD_DECL OFF)
+    message(WARNING "Uses an outdated repo for Carl. Carl is now hosted at https://github.com/moves-rwth/carl-storm")
+elseif("${carl_VERSION_MAJOR}.${carl_VERSION_MINOR}" VERSION_EQUAL "14.23")
+    # This version is too old for forward declarations, but we keep supporting it for the moment.
+    set(STORM_CARL_SUPPORTS_FWD_DECL OFF)
+else()
+    set(STORM_CARL_SUPPORTS_FWD_DECL ON)
 endif()
 
 if(STORM_USE_CLN_RF AND NOT STORM_HAVE_CLN)
@@ -517,6 +563,13 @@ endif()
 
 include(${STORM_3RDPARTY_SOURCE_DIR}/include_xerces.cmake)
 
+#############################################################
+##
+##	SoPlex
+##
+#############################################################
+
+include(${STORM_3RDPARTY_SOURCE_DIR}/include_soplex.cmake)
 
 #############################################################
 ##
@@ -549,7 +602,7 @@ ExternalProject_Add(
         DOWNLOAD_COMMAND ""
         PREFIX "sylvan"
         SOURCE_DIR ${STORM_3RDPARTY_SOURCE_DIR}/sylvan
-        CMAKE_ARGS -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DGMP_LOCATION=${GMP_LIB_LOCATION}  -DGMP_INCLUDE=${GMP_INCLUDE_DIR}  -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER} -DSYLVAN_BUILD_DOCS=OFF -DSYLVAN_BUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=${SYLVAN_BUILD_TYPE} -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DUSE_CARL=ON -Dcarl_DIR=${carl_DIR} -DSYLVAN_PORTABLE=${STORM_PORTABLE} -DBoost_INCLUDE_DIRS=${Boost_INCLUDE_DIRS} -DBUILD_SHARED_LIBS=OFF -DSYLVAN_BUILD_TESTS=OFF
+        CMAKE_ARGS -DPROJECT_NAME=storm -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER} -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER} -DSYLVAN_BUILD_DOCS=OFF -DSYLVAN_BUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=${SYLVAN_BUILD_TYPE} -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DSYLVAN_GMP=ON -DUSE_CARL=ON -Dcarl_DIR=${carl_DIR} -DBUILD_SHARED_LIBS=OFF
         BINARY_DIR ${STORM_3RDPARTY_BINARY_DIR}/sylvan
         BUILD_IN_SOURCE 0
         INSTALL_COMMAND ""
@@ -564,35 +617,14 @@ ExternalProject_Add(
 
 ExternalProject_Get_Property(sylvan source_dir)
 ExternalProject_Get_Property(sylvan binary_dir)
-set(Sylvan_INCLUDE_DIR "${source_dir}/src")
-set(Sylvan_LIBRARY "${binary_dir}/src/libsylvan${STATIC_EXT}")
+set(sylvan_INCLUDE_DIR "${source_dir}/src")
+set(sylvan_LIBRARY "${binary_dir}/src/libsylvan${STATIC_EXT}")
 message(STATUS "Storm - Using shipped version of sylvan.")
 message(STATUS "Storm - Linking with sylvan.")
-add_imported_library(sylvan STATIC ${Sylvan_LIBRARY} ${Sylvan_INCLUDE_DIR})
+add_imported_library(sylvan STATIC ${sylvan_LIBRARY} ${sylvan_INCLUDE_DIR})
 add_dependencies(sylvan_STATIC sylvan)
 
 list(APPEND STORM_DEP_TARGETS sylvan_STATIC)
-
-find_package(HWLOC QUIET REQUIRED)
-if(HWLOC_FOUND)
-    message(STATUS "Storm - Linking with hwloc ${HWLOC_VERSION}.")
-    add_imported_library(HWLOC STATIC ${HWLOC_LIBRARIES} "")
-    list(APPEND STORM_DEP_TARGETS HWLOC_STATIC)
-else()
-    if(${OPERATING_SYSTEM} MATCHES "Linux")
-        message(FATAL_ERROR "HWLOC is required on Linux but was not found.")
-    endif()
-endif()
-
-#############################################################
-##
-##	cpptemplate
-##
-#############################################################
-
-add_imported_library_interface(CppTemplate "${STORM_3RDPARTY_SOURCE_DIR}/cpptemplate/")
-list(APPEND STORM_DEP_TARGETS CppTemplate)
-list(APPEND STORM_3RDPARTY_SOURCES ${STORM_3RDPARTY_SOURCE_DIR}/cpptemplate/cpptempl.cpp)
 
 #############################################################
 ##
@@ -623,6 +655,7 @@ ExternalProject_Add(
 # Specify include dir
 ExternalProject_Get_Property(googletest source_dir)
 set(GTEST_INCLUDE_DIR ${source_dir}/googletest/include)
+set(GMOCK_INCLUDE_DIR ${source_dir}/googlemock/include)
 # Specify MainTest's link libraries
 ExternalProject_Get_Property(googletest binary_dir)
 set(GTEST_LIBRARIES ${binary_dir}/lib/libgtest${STATIC_EXT} ${binary_dir}/lib/libgtest_main${STATIC_EXT})

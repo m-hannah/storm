@@ -12,19 +12,29 @@ namespace settings {
 namespace modules {
 
 const std::string MinMaxEquationSolverSettings::moduleName = "minmax";
-const std::string MinMaxEquationSolverSettings::solvingMethodOptionName = "method";
-const std::string MinMaxEquationSolverSettings::maximalIterationsOptionName = "maxiter";
-const std::string MinMaxEquationSolverSettings::maximalIterationsOptionShortName = "i";
-const std::string MinMaxEquationSolverSettings::precisionOptionName = "precision";
-const std::string MinMaxEquationSolverSettings::absoluteOptionName = "absolute";
-const std::string MinMaxEquationSolverSettings::valueIterationMultiplicationStyleOptionName = "vimult";
-const std::string MinMaxEquationSolverSettings::intervalIterationSymmetricUpdatesOptionName = "symmetricupdates";
+const std::string solvingMethodOptionName = "method";
+const std::string maximalIterationsOptionName = "maxiter";
+const std::string maximalIterationsOptionShortName = "i";
+const std::string precisionOptionName = "precision";
+const std::string absoluteOptionName = "absolute";
+const std::string valueIterationMultiplicationStyleOptionName = "vimult";
+const std::string intervalIterationSymmetricUpdatesOptionName = "symmetricupdates";
+const std::string forceUniqueSolutionRequirementOptionName = "force-require-unique";
+const std::string lpEqualityForUniqueActionsOptionName = "lp-eq-unique-actions";
+const std::string lpUseNonTrivialBoundsOptionName = "lp-use-nontrivial-bounds";
+const std::string lpOptimizeOnlyInitialStateOptionName = "lp-objective-type";
+const std::string lpOptimizeForFeasibilityQueries = "lp-use-optimization-for-feasibility";
 
 MinMaxEquationSolverSettings::MinMaxEquationSolverSettings() : ModuleSettings(moduleName) {
-    std::vector<std::string> minMaxSolvingTechniques = {
-        "vi",     "value-iteration",    "pi",  "policy-iteration",      "lp",  "linear-programming",         "rs",          "ratsearch",
-        "ii",     "interval-iteration", "svi", "sound-value-iteration", "ovi", "optimistic-value-iteration", "topological", "vi-to-pi",
-        "acyclic"};
+    std::vector<std::string> minMaxSolvingTechniques = {"vi",          "value-iteration",
+                                                        "pi",          "policy-iteration",
+                                                        "lp",          "linear-programming",
+                                                        "rs",          "ratsearch",
+                                                        "ii",          "interval-iteration",
+                                                        "svi",         "sound-value-iteration",
+                                                        "ovi",         "optimistic-value-iteration",
+                                                        "topological", "vi-to-pi",
+                                                        "vi-to-lp",    "acyclic"};
     this->addOption(
         storm::settings::OptionBuilder(moduleName, solvingMethodOptionName, false, "Sets which min/max linear equation solving technique is preferred.")
             .setIsAdvanced()
@@ -68,6 +78,34 @@ MinMaxEquationSolverSettings::MinMaxEquationSolverSettings() : ModuleSettings(mo
                                                    "If set, interval iteration performs an update on both, lower and upper bound in each iteration")
                         .setIsAdvanced()
                         .build());
+
+    this->addOption(storm::settings::OptionBuilder(moduleName, forceUniqueSolutionRequirementOptionName, false,
+                                                   "If set, a MinMax solver always requires a unique solution for its input.")
+                        .setIsAdvanced()
+                        .build());
+
+    this->addOption(storm::settings::OptionBuilder(moduleName, lpEqualityForUniqueActionsOptionName, false,
+                                                   "If set, enforce equality in the LP encoding for actions with a unique state.")
+                        .setIsAdvanced()
+                        .build());
+
+    this->addOption(storm::settings::OptionBuilder(moduleName, lpUseNonTrivialBoundsOptionName, false, "If set, use nontrivial bounds in the LP encoding")
+                        .setIsAdvanced()
+                        .build());
+
+    std::vector<std::string> optimizationObjectiveTypes = {"all", "onlyinitial"};
+    this->addOption(
+        storm::settings::OptionBuilder(moduleName, lpOptimizeOnlyInitialStateOptionName, false, "What objective to prefer")
+            .setIsAdvanced()
+            .addArgument(storm::settings::ArgumentBuilder::createStringArgument("optimization-type", "What kind of optimization objective to prefer.")
+                             .addValidatorString(ArgumentValidatorFactory::createMultipleChoiceValidator(optimizationObjectiveTypes))
+                             .setDefaultValueString("all")
+                             .build())
+            .build());
+
+    this->addOption(storm::settings::OptionBuilder(moduleName, lpOptimizeForFeasibilityQueries, false, "If set, use optimization in feasibility queries.")
+                        .setIsAdvanced()
+                        .build());
 }
 
 storm::solver::MinMaxMethod MinMaxEquationSolverSettings::getMinMaxEquationSolvingMethod() const {
@@ -90,6 +128,8 @@ storm::solver::MinMaxMethod MinMaxEquationSolverSettings::getMinMaxEquationSolvi
         return storm::solver::MinMaxMethod::Topological;
     } else if (minMaxEquationSolvingTechnique == "vi-to-pi") {
         return storm::solver::MinMaxMethod::ViToPi;
+    } else if (minMaxEquationSolvingTechnique == "vi-to-lp") {
+        return storm::solver::MinMaxMethod::ViToLp;
     } else if (minMaxEquationSolvingTechnique == "acyclic") {
         return storm::solver::MinMaxMethod::Acyclic;
     }
@@ -144,6 +184,26 @@ storm::solver::MultiplicationStyle MinMaxEquationSolverSettings::getValueIterati
 
 bool MinMaxEquationSolverSettings::isForceIntervalIterationSymmetricUpdatesSet() const {
     return this->getOption(intervalIterationSymmetricUpdatesOptionName).getHasOptionBeenSet();
+}
+
+bool MinMaxEquationSolverSettings::isForceUniqueSolutionRequirementSet() const {
+    return this->getOption(forceUniqueSolutionRequirementOptionName).getHasOptionBeenSet();
+}
+
+bool MinMaxEquationSolverSettings::getLpUseOnlyInitialStateAsObjective() const {
+    return this->getOption(lpOptimizeOnlyInitialStateOptionName).getArgumentByName("optimization-type").getValueAsString() == "onlyinitial";
+}
+
+bool MinMaxEquationSolverSettings::getLpUseNonTrivialBounds() const {
+    return this->getOption(lpUseNonTrivialBoundsOptionName).getHasOptionBeenSet();
+}
+
+bool MinMaxEquationSolverSettings::getLpOptimizeFeasibilityQueries() const {
+    return this->getOption(lpOptimizeForFeasibilityQueries).getHasOptionBeenSet();
+}
+
+bool MinMaxEquationSolverSettings::getLpUseEqualityForTrivialActions() const {
+    return this->getOption(lpEqualityForUniqueActionsOptionName).getHasOptionBeenSet();
 }
 
 }  // namespace modules

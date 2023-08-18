@@ -65,7 +65,9 @@ std::map<storm::storage::sparse::state_type, ValueType> SparseMdpPrctlHelper<Val
     // Initialize epoch models
     auto initEpoch = rewardUnfolding.getStartEpoch();
     auto epochOrder = rewardUnfolding.getEpochComputationOrder(initEpoch);
-
+    if (storm::settings::getModule<storm::settings::modules::CoreSettings>().isShowStatisticsSet()) {
+        STORM_PRINT_AND_LOG("Number of Epochs: " << epochOrder.size() << ".");
+    }
     // initialize data that will be needed for each epoch
     std::vector<ValueType> x, b;
     std::unique_ptr<storm::solver::MinMaxLinearEquationSolver<ValueType>> minMaxSolver;
@@ -352,9 +354,11 @@ SparseMdpHintType<ValueType> computeHints(Environment const& env, SolutionType c
         }
 
         // If the solver requires an initial scheduler, compute one now. Note that any scheduler is valid if there are no end components.
-        if (requirements.validInitialScheduler() && !result.noEndComponents) {
-            STORM_LOG_DEBUG("Computing valid scheduler, because the solver requires it.");
-            result.schedulerHint = computeValidSchedulerHint(env, type, transitionMatrix, backwardTransitions, maybeStates, phiStates, targetStates);
+        if (requirements.validInitialScheduler()) {
+            if (!result.noEndComponents) {
+                STORM_LOG_DEBUG("Computing valid scheduler, because the solver requires it.");
+                result.schedulerHint = computeValidSchedulerHint(env, type, transitionMatrix, backwardTransitions, maybeStates, phiStates, targetStates);
+            }
             requirements.clearValidInitialScheduler();
         }
 
@@ -461,7 +465,10 @@ MaybeStateResult<ValueType> computeValuesForMaybeStates(Environment const& env, 
     }
 
     // Solve the corresponding system of equations.
+    storm::utility::Stopwatch sw(true);
     solver->solveEquations(env, x, b);
+    sw.stop();
+    STORM_PRINT("Time for solving: " << sw << "\n");
 
 #ifndef NDEBUG
     // As a sanity check, make sure our local upper bounds were in fact correct.
@@ -613,8 +620,9 @@ boost::optional<SparseMdpEndComponentInformation<ValueType>> computeFixedPointSy
     storm::storage::SparseMatrix<ValueType>& submatrix, std::vector<ValueType>& b, bool produceScheduler,
     boost::optional<std::vector<ValueType>>& oneStepTargetProbabilities) {
     // Get the set of states that (under some scheduler) can stay in the set of maybestates forever
-    storm::storage::BitVector candidateStates = storm::utility::graph::performProb0E(
-        transitionMatrix, transitionMatrix.getRowGroupIndices(), backwardTransitions, qualitativeStateSets.maybeStates, ~qualitativeStateSets.maybeStates);
+    auto const nonMaybeStates = ~qualitativeStateSets.maybeStates;
+    storm::storage::BitVector candidateStates = storm::utility::graph::performProb0E(transitionMatrix, transitionMatrix.getRowGroupIndices(),
+                                                                                     backwardTransitions, qualitativeStateSets.maybeStates, nonMaybeStates);
 
     bool doDecomposition = !candidateStates.empty();
 
@@ -633,7 +641,7 @@ boost::optional<SparseMdpEndComponentInformation<ValueType>> computeFixedPointSy
         if (oneStepTargetProbabilities) {
             origOneStepTargetProbs.reserve(transitionMatrix.getRowCount());
             for (uint64_t row = 0; row < transitionMatrix.getRowCount(); ++row) {
-                origOneStepTargetProbs.push_back(transitionMatrix.getConstrainedRowSum(row, qualitativeStateSets.maybeStates));
+                origOneStepTargetProbs.push_back(transitionMatrix.getConstrainedRowSum(row, nonMaybeStates));
             }
             origOneStepTargetProbsPtr = &origOneStepTargetProbs;
             oneStepTargetProbsPtr = &oneStepTargetProbabilities.get();
@@ -882,15 +890,22 @@ MDPSparseModelCheckingHelperReturnType<ValueType> SparseMdpPrctlHelper<ValueType
                 newRew0AStates.set(ecElimResult.oldToNewStateMapping[oldRew0AState]);
             }
 
+            if (goal.hasRelevantValues()) {
+                storm::storage::BitVector newRelevantValues(ecElimResult.matrix.getRowGroupCount(), false);
+                for (auto oldRelevantState : goal.relevantValues()) {
+                    newRelevantValues.set(ecElimResult.oldToNewStateMapping[oldRelevantState]);
+                }
+                goal.relevantValues() = std::move(newRelevantValues);
+            }
+
             MDPSparseModelCheckingHelperReturnType<ValueType> result = computeReachabilityRewardsHelper(
                 env, std::move(goal), ecElimResult.matrix, ecElimResult.matrix.transpose(true),
-                [&](uint_fast64_t rowCount, storm::storage::SparseMatrix<ValueType> const& transitionMatrix, storm::storage::BitVector const& maybeStates) {
+                [&](uint_fast64_t rowCount, storm::storage::SparseMatrix<ValueType> const& newTransitionMatrix, storm::storage::BitVector const& maybeStates) {
                     std::vector<ValueType> result;
                     std::vector<ValueType> oldChoiceRewards = rewardModel.getTotalRewardVector(transitionMatrix);
                     result.reserve(rowCount);
                     for (uint64_t newState : maybeStates) {
-                        for (uint64_t newChoice = transitionMatrix.getRowGroupIndices()[newState];
-                             newChoice < transitionMatrix.getRowGroupIndices()[newState + 1]; ++newChoice) {
+                        for (auto newChoice : newTransitionMatrix.getRowGroupIndices(newState)) {
                             uint64_t oldChoice = ecElimResult.newToOldRowMapping[newChoice];
                             result.push_back(oldChoiceRewards[oldChoice]);
                         }
@@ -1084,7 +1099,7 @@ void extendScheduler(storm::storage::Scheduler<ValueType>& scheduler, storm::sol
             scheduler.setChoice(0, state);
         }
     } else {
-        storm::utility::graph::computeSchedulerRewInf(qualitativeStateSets.infinityStates, transitionMatrix, scheduler);
+        storm::utility::graph::computeSchedulerRewInf(qualitativeStateSets.infinityStates, transitionMatrix, backwardTransitions, scheduler);
         for (auto state : qualitativeStateSets.rewardZeroStates) {
             scheduler.setChoice(0, state);
         }

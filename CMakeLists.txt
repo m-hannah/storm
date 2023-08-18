@@ -46,6 +46,7 @@ MARK_AS_ADVANCED(STORM_FORCE_POPCNT)
 option(USE_BOOST_STATIC_LIBRARIES "Sets whether the Boost libraries should be linked statically." OFF)
 option(STORM_USE_INTELTBB "Sets whether the Intel TBB libraries should be used." OFF)
 option(STORM_USE_GUROBI "Sets whether Gurobi should be used." OFF)
+option(STORM_USE_SOPLEX "Sets whether Soplex should be used." OFF)
 set(STORM_CARL_DIR_HINT "" CACHE STRING "A hint where the preferred CArL version can be found. If CArL cannot be found there, it is searched in the OS's default paths.")
 option(STORM_FORCE_SHIPPED_CARL "Sets whether the shipped version of carl is to be used no matter whether carl is found or not." OFF)
 MARK_AS_ADVANCED(STORM_FORCE_SHIPPED_CARL)
@@ -87,6 +88,9 @@ set(USE_XERCESC ${XML_SUPPORT})
 mark_as_advanced(USE_XERCESC)
 option(STORM_COMPILE_WITH_ADDRESS_SANITIZER "Sets whether to compile with AddressSanitizer enabled" OFF)
 option(STORM_COMPILE_WITH_ALL_SANITIZERS "Sets whether to compile with all sanitizers enabled" OFF)
+option(STORM_COMPILE_WITH_COMPILATION_PROFILING "Compile with output to profile compilation process" OFF)
+MARK_AS_ADVANCED(STORM_COMPILE_WITH_COMPILATION_PROFILING)
+
 
 if (STORM_COMPILE_WITH_ALL_SANITIZERS)
     set(STORM_COMPILE_WITH_ADDRESS_SANITIZER ON)
@@ -182,6 +186,22 @@ else()
 ENDIF()
 message(STATUS "Storm - Detected operating system ${OPERATING_SYSTEM}.")
 
+set(SHIPPED_CARL_USE_CLN_NUMBERS ON)
+set(SHIPPED_CARL_USE_GINAC ON)
+# Detect Apple Silicon and adjust settings
+if(APPLE AND ${CMAKE_SYSTEM_PROCESSOR} MATCHES arm64)
+	message(STATUS "Storm - Detected that target system uses Apple Silicon.")
+	message(WARNING "Compiling natively on Apple Silicon is experimental. Pleare report issues to support@stormchecker.org. For more information visit https://www.stormchecker.org/documentation/obtain-storm/apple-silicon.html")
+	set(APPLE_SILICON 1)
+	if(STORM_USE_CLN_EA OR STORM_USE_CLN_RF)
+		message(WARNING "CLN and GiNaC are currently not supported on Apple Silicon-based architectures. Disabling Storm and carl usage of the libraries.")
+		set(STORM_USE_CLN_EA OFF)
+		set(STORM_USE_CLN_RF OFF)
+	endif()
+	set(SHIPPED_CARL_USE_CLN_NUMBERS OFF)
+	set(SHIPPED_CARL_USE_GINAC OFF)
+endif()
+
 set(DYNAMIC_EXT ".so")
 set(STATIC_EXT ".a")
 set(LIB_PREFIX "lib")
@@ -266,11 +286,6 @@ if (STORM_FORCE_POPCNT)
 	set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mpopcnt")
 endif()
 
-# TODO: remove forcing the old version of optional as soon as the related Spirit bug is fixed:
-# https://svn.boost.org/trac/boost/ticket/12349
-# Fix thanks to: https://github.com/freeorion/freeorion/issues/777
-add_definitions(-DBOOST_RESULT_OF_USE_DECLTYPE -DBOOST_OPTIONAL_CONFIG_USE_OLD_IMPLEMENTATION_OF_OPTIONAL)
-
 #############################################################
 ##
 ##	Compiler specific settings
@@ -333,9 +348,18 @@ if (STORM_COMPILE_WITH_ADDRESS_SANITIZER)
 endif()
 
 # In release mode, we turn on even more optimizations if we do not have to provide a portable binary.
-if (NOT STORM_PORTABLE)
+if (NOT STORM_PORTABLE AND (NOT APPLE_SILICON OR (STORM_COMPILER_CLANG AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15.0)))
 	set (CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -march=native")
-endif ()
+endif()
+
+if (STORM_COMPILE_WITH_COMPILATION_PROFILING)
+	if (CLANG)
+		# Allow profiling of compilation times,
+		# outputs json with chromium-tracing information along every object file (open in chrome://tracing/).
+		# overhead is very limited
+		set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ftime-trace")
+	endif()
+endif()
 
 if (STORM_DEVELOPER)
 	set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pedantic")
@@ -548,6 +572,8 @@ set(STORM_TARGETS "")
 add_subdirectory(src)
 
 export_option(STORM_HAVE_XERCES)
+export_option(STORM_HAVE_SPOT)
+export_option(STORM_HAVE_GUROBI)
 
 include(export)
 

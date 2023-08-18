@@ -1,5 +1,6 @@
 #include "storm/environment/solver/MinMaxSolverEnvironment.h"
 
+#include "storm/environment/solver/MinMaxLpSolverEnvironment.h"
 #include "storm/settings/SettingsManager.h"
 #include "storm/settings/modules/MinMaxEquationSolverSettings.h"
 #include "storm/utility/constants.h"
@@ -25,6 +26,7 @@ MinMaxSolverEnvironment::MinMaxSolverEnvironment() {
                      "Unknown convergence criterion");
     multiplicationStyle = minMaxSettings.getValueIterationMultiplicationStyle();
     symmetricUpdates = minMaxSettings.isForceIntervalIterationSymmetricUpdatesSet();
+    forceRequireUnique = minMaxSettings.isForceUniqueSolutionRequirementSet();
 }
 
 MinMaxSolverEnvironment::~MinMaxSolverEnvironment() {
@@ -76,12 +78,27 @@ void MinMaxSolverEnvironment::setMultiplicationStyle(storm::solver::Multiplicati
     multiplicationStyle = value;
 }
 
+MinMaxLpSolverEnvironment const& MinMaxSolverEnvironment::getMinMaxLpSolverEnvironment() const {
+    return lpEnv.get();
+}
+MinMaxLpSolverEnvironment& MinMaxSolverEnvironment::getMinMaxLpSolverEnvironment() {
+    return lpEnv.get();
+}
+
 bool MinMaxSolverEnvironment::isSymmetricUpdatesSet() const {
     return symmetricUpdates;
 }
 
 void MinMaxSolverEnvironment::setSymmetricUpdates(bool value) {
     symmetricUpdates = value;
+}
+
+bool MinMaxSolverEnvironment::isForceRequireUnique() const {
+    return forceRequireUnique;
+}
+
+void MinMaxSolverEnvironment::setForceRequireUnique(bool value) {
+    forceRequireUnique = value;
 }
 
 }  // namespace storm

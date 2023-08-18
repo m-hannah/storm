@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "storm/solver/StandardMinMaxLinearEquationSolver.h"
 
 #include "storm/solver/SolverSelectionOptions.h"
@@ -48,12 +50,13 @@ class TopologicalMinMaxLinearEquationSolver : public StandardMinMaxLinearEquatio
                                            std::vector<ValueType> const& b) const;
     // ... for the remaining cases (1 < scc.size() < x.size())
     bool solveScc(storm::Environment const& sccSolverEnvironment, OptimizationDirection d, storm::storage::BitVector const& sccRowGroups,
-                  storm::storage::BitVector const& sccRows, std::vector<ValueType>& globalX, std::vector<ValueType> const& globalB) const;
+                  storm::storage::BitVector const& sccRows, std::vector<ValueType>& globalX, std::vector<ValueType> const& globalB,
+                  std::optional<storm::storage::BitVector> const& globalRelevantValues) const;
 
     std::vector<ValueType> computeSccExitProbabilities(storm::storage::BitVector const& sccRowGroups, storm::storage::BitVector const& sccRows) const {
         assert(this->oneMinusRowSumVector);
         std::vector<ValueType> result;
-        result.reserve(sccRows.size());
+        result.reserve(sccRows.getNumberOfSetBits());
         for (auto rowIndex : sccRows) {
             ValueType exitProb = (*oneMinusRowSumVector)[rowIndex];
             for (auto const& entry : this->A->getRow(rowIndex)) {

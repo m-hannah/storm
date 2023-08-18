@@ -1,14 +1,11 @@
-#include <boost/algorithm/string.hpp>
-
-#include "storm-cli-utilities/cli.h"
 #include "storm-dft/api/storm-dft.h"
+#include "storm-cli-utilities/cli.h"
 #include "storm-dft/settings/DftSettings.h"
 #include "storm-dft/settings/modules/DftGspnSettings.h"
 #include "storm-dft/settings/modules/DftIOSettings.h"
 #include "storm-dft/settings/modules/FaultTreeSettings.h"
 #include "storm-parsers/api/storm-parsers.h"
 #include "storm/exceptions/UnmetRequirementException.h"
-#include "storm/settings/modules/DebugSettings.h"
 #include "storm/settings/modules/GeneralSettings.h"
 #include "storm/settings/modules/IOSettings.h"
 #include "storm/settings/modules/ResourceSettings.h"
@@ -20,20 +17,20 @@
  */
 template<typename ValueType>
 void processOptions() {
-    auto const& dftIOSettings = storm::settings::getModule<storm::settings::modules::DftIOSettings>();
-    auto const& faultTreeSettings = storm::settings::getModule<storm::settings::modules::FaultTreeSettings>();
+    auto const& dftIOSettings = storm::settings::getModule<storm::dft::settings::modules::DftIOSettings>();
+    auto const& faultTreeSettings = storm::settings::getModule<storm::dft::settings::modules::FaultTreeSettings>();
     auto const& ioSettings = storm::settings::getModule<storm::settings::modules::IOSettings>();
-    auto const& dftGspnSettings = storm::settings::getModule<storm::settings::modules::DftGspnSettings>();
+    auto const& dftGspnSettings = storm::settings::getModule<storm::dft::settings::modules::DftGspnSettings>();
     auto const& transformationSettings = storm::settings::getModule<storm::settings::modules::TransformationSettings>();
 
     // Build DFT from given file
-    std::shared_ptr<storm::storage::DFT<ValueType>> dft;
+    std::shared_ptr<storm::dft::storage::DFT<ValueType>> dft;
     if (dftIOSettings.isDftFileSet()) {
         STORM_LOG_DEBUG("Loading DFT from Galileo file " << dftIOSettings.getDftFilename());
-        dft = storm::api::loadDFTGalileoFile<ValueType>(dftIOSettings.getDftFilename());
+        dft = storm::dft::api::loadDFTGalileoFile<ValueType>(dftIOSettings.getDftFilename());
     } else if (dftIOSettings.isDftJsonFileSet()) {
         STORM_LOG_DEBUG("Loading DFT from Json file " << dftIOSettings.getDftJsonFilename());
-        dft = storm::api::loadDFTJsonFile<ValueType>(dftIOSettings.getDftJsonFilename());
+        dft = storm::dft::api::loadDFTJsonFile<ValueType>(dftIOSettings.getDftJsonFilename());
     } else {
         STORM_LOG_THROW(false, storm::exceptions::InvalidSettingsException, "No input model given.");
     }
@@ -46,16 +43,16 @@ void processOptions() {
 
     // Export to json
     if (dftIOSettings.isExportToJson()) {
-        storm::api::exportDFTToJsonFile<ValueType>(*dft, dftIOSettings.getExportJsonFilename());
+        storm::dft::api::exportDFTToJsonFile<ValueType>(*dft, dftIOSettings.getExportJsonFilename());
     }
 
     // Check well-formedness of DFT
-    auto wellFormedResult = storm::api::isWellFormed(*dft, false);
+    auto wellFormedResult = storm::dft::api::isWellFormed(*dft, false);
     STORM_LOG_THROW(wellFormedResult.first, storm::exceptions::UnmetRequirementException, "DFT is not well-formed: " << wellFormedResult.second);
 
     // Transformation to GSPN
     if (dftGspnSettings.isTransformToGspn()) {
-        std::pair<std::shared_ptr<storm::gspn::GSPN>, uint64_t> pair = storm::api::transformToGSPN(*dft);
+        std::pair<std::shared_ptr<storm::gspn::GSPN>, uint64_t> pair = storm::dft::api::transformToGSPN(*dft);
         std::shared_ptr<storm::gspn::GSPN> gspn = pair.first;
         uint64_t toplevelFailedPlace = pair.second;
 
@@ -64,13 +61,13 @@ void processOptions() {
 
         // Transform to Jani
         // TODO analyse Jani model
-        std::shared_ptr<storm::jani::Model> model = storm::api::transformToJani(*gspn, toplevelFailedPlace);
+        std::shared_ptr<storm::jani::Model> model = storm::dft::api::transformToJani(*gspn, toplevelFailedPlace);
         return;
     }
 
     // Export to SMT
     if (dftIOSettings.isExportToSmt()) {
-        storm::api::exportDFTToSMT<ValueType>(*dft, dftIOSettings.getExportSmtFilename());
+        storm::dft::api::exportDFTToSMT<ValueType>(*dft, dftIOSettings.getExportSmtFilename());
         return;
     }
 
@@ -85,17 +82,17 @@ void processOptions() {
 
     // Apply transformations
     // TODO transform later before actual analysis
-    dft = storm::api::applyTransformations(*dft, faultTreeSettings.isUniqueFailedBE(), true);
+    dft = storm::dft::api::applyTransformations(*dft, faultTreeSettings.isUniqueFailedBE(), true, false);
     STORM_LOG_DEBUG(dft->getElementsString());
 
     // Compute minimal number of BE failures leading to system failure and
     // maximal number of BE failures not leading to system failure yet.
     // TODO: always needed?
-    auto bounds = storm::api::computeBEFailureBounds(*dft, useSMT, solverTimeout);
+    auto bounds = storm::dft::api::computeBEFailureBounds(*dft, useSMT, solverTimeout);
     STORM_LOG_DEBUG("BE failure bounds: lower bound: " << bounds.first << ", upper bound: " << bounds.second << ".");
 
     // Check which FDEPs actually introduce conflicts which need non-deterministic resolution
-    bool hasConflicts = storm::api::computeDependencyConflicts(*dft, useSMT, solverTimeout);
+    bool hasConflicts = storm::dft::api::computeDependencyConflicts(*dft, useSMT, solverTimeout);
     if (hasConflicts) {
         STORM_LOG_DEBUG("FDEP conflicts found.");
     } else {
@@ -107,7 +104,7 @@ void processOptions() {
         // Solve with SMT
         STORM_LOG_DEBUG("Running DFT analysis with use of SMT.");
         // Set dynamic behavior vector
-        storm::api::analyzeDFTSMT(*dft, true);
+        storm::dft::api::analyzeDFTSMT(*dft, true);
     }
 #endif
 
@@ -152,9 +149,9 @@ void processOptions() {
         }
 
         auto const additionalRelevantEventNames{faultTreeSettings.getRelevantEvents()};
-        storm::api::analyzeDFTBdd<ValueType>(dft, isExportToBddDot, filename, isMTTF, mttfPrecision, mttfStepsize, mttfAlgorithm, isMinimalCutSets,
-                                             probabilityAnalysis, isModularisation, importanceMeasureName, timepoints, manuallyInputtedProperties,
-                                             additionalRelevantEventNames, chunksize);
+        storm::dft::api::analyzeDFTBdd<ValueType>(dft, isExportToBddDot, filename, isMTTF, mttfPrecision, mttfStepsize, mttfAlgorithm, isMinimalCutSets,
+                                                  probabilityAnalysis, isModularisation, importanceMeasureName, timepoints, manuallyInputtedProperties,
+                                                  additionalRelevantEventNames, chunksize);
 
         // don't perform other analysis if analyzeWithBdds is set
         if (dftIOSettings.isAnalyzeWithBdds()) {
@@ -217,9 +214,10 @@ void processOptions() {
         // All events are relevant
         additionalRelevantEventNames = {"all"};
     }
-    storm::utility::RelevantEvents relevantEvents = storm::api::computeRelevantEvents<ValueType>(*dft, props, additionalRelevantEventNames);
+    storm::dft::utility::RelevantEvents relevantEvents = storm::dft::api::computeRelevantEvents<ValueType>(*dft, props, additionalRelevantEventNames);
 
     // Analyze DFT
+    dft = storm::dft::api::prepareForMarkovAnalysis<ValueType>(*dft);
     // TODO allow building of state space even without properties
     if (props.empty()) {
         STORM_LOG_WARN("No property given. No analysis will be performed.");
@@ -228,9 +226,10 @@ void processOptions() {
         if (faultTreeSettings.isApproximationErrorSet()) {
             approximationError = faultTreeSettings.getApproximationError();
         }
-        storm::api::analyzeDFT<ValueType>(*dft, props, faultTreeSettings.useSymmetryReduction(), faultTreeSettings.useModularisation(), relevantEvents,
-                                          faultTreeSettings.isAllowDCForRelevantEvents(), approximationError, faultTreeSettings.getApproximationHeuristic(),
-                                          transformationSettings.isChainEliminationSet(), transformationSettings.getLabelBehavior(), true);
+        storm::dft::api::analyzeDFT<ValueType>(*dft, props, faultTreeSettings.useSymmetryReduction(), faultTreeSettings.useModularisation(), relevantEvents,
+                                               faultTreeSettings.isAllowDCForRelevantEvents(), approximationError,
+                                               faultTreeSettings.getApproximationHeuristic(), transformationSettings.isChainEliminationSet(),
+                                               transformationSettings.getLabelBehavior(), true);
     }
 }
 
@@ -245,7 +244,7 @@ int main(const int argc, const char** argv) {
     try {
         storm::utility::setUp();
         storm::cli::printHeader("Storm-dft", argc, argv);
-        storm::settings::initializeDftSettings("Storm-dft", "storm-dft");
+        storm::dft::settings::initializeDftSettings("Storm-dft", "storm-dft");
 
         storm::utility::Stopwatch totalTimer(true);
         if (!storm::cli::parseOptions(argc, argv)) {

@@ -4,9 +4,8 @@
 #include "storm-dft/api/storm-dft.h"
 #include "storm-dft/generator/DftNextStateGenerator.h"
 #include "storm-dft/simulator/DFTTraceSimulator.h"
-#include "storm-dft/storage/dft/DFTIsomorphism.h"
-#include "storm-dft/storage/dft/SymmetricUnits.h"
-#include "storm-dft/transformations/DftTransformator.h"
+#include "storm-dft/storage/DFTIsomorphism.h"
+#include "storm-dft/storage/SymmetricUnits.h"
 
 #include "storm-parsers/api/storm-parsers.h"
 
@@ -66,29 +65,28 @@ class DftTraceGeneratorTest : public ::testing::Test {
         return config;
     }
 
-    std::pair<std::shared_ptr<storm::storage::DFT<double>>, storm::storage::DFTStateGenerationInfo> prepareDFT(std::string const& file) {
+    std::pair<std::shared_ptr<storm::dft::storage::DFT<double>>, storm::dft::storage::DFTStateGenerationInfo> prepareDFT(std::string const& file) {
         // Load, build and prepare DFT
-        storm::transformations::dft::DftTransformator<double> dftTransformator = storm::transformations::dft::DftTransformator<double>();
-        std::shared_ptr<storm::storage::DFT<double>> dft = dftTransformator.transformBinaryFDEPs(*(storm::api::loadDFTGalileoFile<double>(file)));
-        EXPECT_TRUE(storm::api::isWellFormed(*dft).first);
+        std::shared_ptr<storm::dft::storage::DFT<double>> dft =
+            storm::dft::api::prepareForMarkovAnalysis<double>(*(storm::dft::api::loadDFTGalileoFile<double>(file)));
+        EXPECT_TRUE(storm::dft::api::isWellFormed(*dft).first);
 
         // Compute relevant events
         std::vector<std::string> relevantNames;
         if (!config.useDC) {
             relevantNames.push_back("all");
         }
-        storm::utility::RelevantEvents relevantEvents = storm::api::computeRelevantEvents<double>(*dft, {}, relevantNames);
+        storm::dft::utility::RelevantEvents relevantEvents = storm::dft::api::computeRelevantEvents<double>(*dft, {}, relevantNames);
         dft->setRelevantEvents(relevantEvents, false);
 
         // Find symmetries
         std::map<size_t, std::vector<std::vector<size_t>>> emptySymmetry;
-        storm::storage::DFTIndependentSymmetries symmetries(emptySymmetry);
+        storm::dft::storage::DFTIndependentSymmetries symmetries(emptySymmetry);
         if (config.useSR) {
             auto colouring = dft->colourDFT();
             symmetries = dft->findSymmetries(colouring);
         }
-        EXPECT_EQ(config.useSR && config.useDC, !symmetries.sortedSymmetries.empty());
-        storm::storage::DFTStateGenerationInfo stateGenerationInfo(dft->buildStateGenerationInfo(symmetries));
+        storm::dft::storage::DFTStateGenerationInfo stateGenerationInfo(dft->buildStateGenerationInfo(symmetries));
         return std::make_pair(dft, stateGenerationInfo);
     }
 
@@ -103,7 +101,8 @@ TYPED_TEST_SUITE(DftTraceGeneratorTest, TestingTypes, );
 TYPED_TEST(DftTraceGeneratorTest, And) {
     auto pair = this->prepareDFT(STORM_TEST_RESOURCES_DIR "/dft/and.dft");
     auto dft = pair.first;
-    storm::generator::DftNextStateGenerator<double> generator(*dft, pair.second);
+    EXPECT_EQ(this->getConfig().useSR && this->getConfig().useDC, pair.second.hasSymmetries());
+    storm::dft::generator::DftNextStateGenerator<double> generator(*dft, pair.second);
 
     // Start with initial state
     auto state = generator.createInitialState();
@@ -159,6 +158,7 @@ TYPED_TEST(DftTraceGeneratorTest, And) {
 TYPED_TEST(DftTraceGeneratorTest, RandomStepsAnd) {
     auto pair = this->prepareDFT(STORM_TEST_RESOURCES_DIR "/dft/and.dft");
     auto dft = pair.first;
+    EXPECT_EQ(this->getConfig().useSR && this->getConfig().useDC, pair.second.hasSymmetries());
 
     // Init random number generator
     boost::mt19937 gen(5u);
@@ -174,7 +174,7 @@ TYPED_TEST(DftTraceGeneratorTest, RandomStepsAnd) {
     EXPECT_EQ(res, storm::dft::simulator::SimulationResult::SUCCESSFUL);
 #if BOOST_VERSION > 106400
     // Older Boost versions yield different value
-    EXPECT_FLOAT_EQ(timebound, 0.522079);
+    EXPECT_NEAR(timebound, 0.522079, 1e-6);
 #endif
     state = simulator.getCurrentState();
     EXPECT_FALSE(state->hasFailed(dft->getTopLevelIndex()));
@@ -183,8 +183,61 @@ TYPED_TEST(DftTraceGeneratorTest, RandomStepsAnd) {
     EXPECT_EQ(res, storm::dft::simulator::SimulationResult::SUCCESSFUL);
 #if BOOST_VERSION > 106400
     // Older Boost versions yield different value
-    EXPECT_FLOAT_EQ(timebound, 0.9497214);
+    EXPECT_NEAR(timebound, 0.9497214, 1e-6);
 #endif
+    state = simulator.getCurrentState();
+    EXPECT_TRUE(state->hasFailed(dft->getTopLevelIndex()));
+}
+
+TYPED_TEST(DftTraceGeneratorTest, Fdep) {
+    auto pair = this->prepareDFT(STORM_TEST_RESOURCES_DIR "/dft/fdep.dft");
+    auto dft = pair.first;
+
+    // Init random number generator. Will not be important as we are choosing the steps deterministically.
+    boost::mt19937 gen(5u);
+    storm::dft::simulator::DFTTraceSimulator<double> simulator(*dft, pair.second, gen);
+
+    // Start with initial state
+    auto state = simulator.getCurrentState();
+    EXPECT_FALSE(state->hasFailed(dft->getTopLevelIndex()));
+
+    // Let B_Power fail
+    auto iterFailable = state->getFailableElements().begin();
+    ASSERT_NE(iterFailable, state->getFailableElements().end());
+    ++iterFailable;
+    ASSERT_NE(iterFailable, state->getFailableElements().end());
+    ++iterFailable;
+    ASSERT_NE(iterFailable, state->getFailableElements().end());
+
+    ASSERT_FALSE(iterFailable.isFailureDueToDependency());
+    auto nextBEPair = iterFailable.getFailBE(*dft);
+    auto nextBE = nextBEPair.first;
+    auto triggerDep = nextBEPair.second;
+    ASSERT_TRUE(nextBE);
+    ASSERT_FALSE(triggerDep);
+    ASSERT_EQ(nextBE->name(), "B_Power");
+
+    storm::dft::simulator::SimulationResult res = simulator.step(iterFailable);
+    EXPECT_EQ(res, storm::dft::simulator::SimulationResult::SUCCESSFUL);
+    state = simulator.getCurrentState();
+    EXPECT_TRUE(state->hasFailed(4));
+
+    // Let B fail
+    iterFailable = state->getFailableElements().begin();
+    ASSERT_NE(iterFailable, state->getFailableElements().end());
+    ++iterFailable;
+    ASSERT_NE(iterFailable, state->getFailableElements().end());
+
+    ASSERT_TRUE(iterFailable.isFailureDueToDependency());
+    nextBEPair = iterFailable.getFailBE(*dft);
+    nextBE = nextBEPair.first;
+    triggerDep = nextBEPair.second;
+    ASSERT_TRUE(nextBE);
+    ASSERT_TRUE(triggerDep);
+    ASSERT_EQ(nextBE->name(), "B");
+
+    res = simulator.step(iterFailable);
+    EXPECT_EQ(res, storm::dft::simulator::SimulationResult::SUCCESSFUL);
     state = simulator.getCurrentState();
     EXPECT_TRUE(state->hasFailed(dft->getTopLevelIndex()));
 }

@@ -24,6 +24,8 @@ std::string toString(MinMaxMethod m) {
             return "topologicalcuda";
         case MinMaxMethod::ViToPi:
             return "vi-to-pi";
+        case MinMaxMethod::ViToLp:
+            return "vi-to-lp";
         case MinMaxMethod::Acyclic:
             return "vi-to-pi";
     }
@@ -82,6 +84,8 @@ std::string toString(LpSolverType t) {
             return "Glpk";
         case LpSolverType::Z3:
             return "Z3";
+        case LpSolverType::Soplex:
+            return "Soplex";
     }
     return "invalid";
 }

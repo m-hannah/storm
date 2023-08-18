@@ -23,10 +23,23 @@
 namespace storm {
 namespace solver {
 
+GurobiEnvironment::~GurobiEnvironment() {
 #ifdef STORM_HAVE_GUROBI
-template<typename ValueType>
-GurobiLpSolver<ValueType>::GurobiLpSolver(std::string const& name, OptimizationDirection const& optDir)
-    : LpSolver<ValueType>(optDir), env(nullptr), model(nullptr), nextVariableIndex(0), nextConstraintIndex(0) {
+    if (initialized) {
+        GRBfreeenv(env);
+    }
+#endif
+}
+
+#ifdef STORM_HAVE_GUROBI
+GRBenv* GurobiEnvironment::operator*() {
+    STORM_LOG_ASSERT(initialized, "Gurobi Environment has not been initialized");
+    return env;
+}
+#endif
+
+void GurobiEnvironment::initialize() {
+#ifdef STORM_HAVE_GUROBI
     // Create the environment.
     int error = GRBloadenv(&env, "");
     if (error || env == nullptr) {
@@ -34,47 +47,13 @@ GurobiLpSolver<ValueType>::GurobiLpSolver(std::string const& name, OptimizationD
         throw storm::exceptions::InvalidStateException()
             << "Could not initialize Gurobi environment (" << GRBgeterrormsg(env) << ", error code " << error << ").";
     }
+    setOutput(storm::settings::getModule<storm::settings::modules::DebugSettings>().isDebugSet() ||
+              storm::settings::getModule<storm::settings::modules::GurobiSettings>().isOutputSet());
 
-    // Set some general properties of the environment.
-    setGurobiEnvironmentProperties();
+    error = GRBsetintparam(env, "Method", static_cast<int>(storm::settings::getModule<storm::settings::modules::GurobiSettings>().getMethod()));
+    STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
+                    "Unable to set Gurobi Parameter Method (" << GRBgeterrormsg(env) << ", error code " << error << ").");
 
-    // Create the model.
-    error = GRBnewmodel(env, &model, name.c_str(), 0, nullptr, nullptr, nullptr, nullptr, nullptr);
-    if (error) {
-        STORM_LOG_ERROR("Could not initialize Gurobi model (" << GRBgeterrormsg(env) << ", error code " << error << ").");
-        throw storm::exceptions::InvalidStateException() << "Could not initialize Gurobi model (" << GRBgeterrormsg(env) << ", error code " << error << ").";
-    }
-}
-
-template<typename ValueType>
-GurobiLpSolver<ValueType>::GurobiLpSolver(std::string const& name) : GurobiLpSolver(name, OptimizationDirection::Minimize) {
-    // Intentionally left empty.
-}
-
-template<typename ValueType>
-GurobiLpSolver<ValueType>::GurobiLpSolver(OptimizationDirection const& optDir) : GurobiLpSolver("", optDir) {
-    // Intentionally left empty.
-}
-
-template<typename ValueType>
-GurobiLpSolver<ValueType>::GurobiLpSolver() : GurobiLpSolver("", OptimizationDirection::Minimize) {
-    // Intentionally left empty.
-}
-
-template<typename ValueType>
-GurobiLpSolver<ValueType>::~GurobiLpSolver() {
-    // Dispose of the objects allocated inside Gurobi.
-    GRBfreemodel(model);
-    GRBfreeenv(env);
-}
-
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::setGurobiEnvironmentProperties() const {
-    int error = 0;
-
-    // Enable the following line to only print the output of Gurobi if the debug flag is set.
-    toggleOutput(storm::settings::getModule<storm::settings::modules::DebugSettings>().isDebugSet() ||
-                 storm::settings::getModule<storm::settings::modules::GurobiSettings>().isOutputSet());
     // Enable the following line to restrict Gurobi to one thread only.
     error = GRBsetintparam(env, "Threads", storm::settings::getModule<storm::settings::modules::GurobiSettings>().getNumberOfThreads());
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
@@ -93,260 +72,305 @@ void GurobiLpSolver<ValueType>::setGurobiEnvironmentProperties() const {
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
                     "Unable to set Gurobi Parameter IntFeasTol (" << GRBgeterrormsg(env) << ", error code " << error << ").");
 
-    // error = GRBsetintparam(env, "NumericFocus", 3);
-    // STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException, "Unable to set Gurobi Parameter NumericFocus (" << GRBgeterrormsg(env) << ", error
-    // code " << error << ").");
+    initialized = true;
+#endif
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::update() const {
+void GurobiEnvironment::setOutput(bool set) {
+#ifdef STORM_HAVE_GUROBI
+    int error = GRBsetintparam(env, "OutputFlag", set);
+    STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
+                    "Unable to set Gurobi Parameter OutputFlag (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+#else
+    (void)set;
+#endif
+}
+
+#ifdef STORM_HAVE_GUROBI
+
+template<typename ValueType, bool RawMode>
+GurobiLpSolver<ValueType, RawMode>::GurobiLpSolver(std::shared_ptr<GurobiEnvironment> const& environment, std::string const& name,
+                                                   OptimizationDirection const& optDir)
+    : LpSolver<ValueType, RawMode>(optDir), model(nullptr), environment(environment), nextVariableIndex(0) {
+    // Create the model.
+    int error = 0;
+    error = GRBnewmodel(**environment, &model, name.c_str(), 0, nullptr, nullptr, nullptr, nullptr, nullptr);
+    if (error) {
+        STORM_LOG_ERROR("Could not initialize Gurobi model (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
+        throw storm::exceptions::InvalidStateException()
+            << "Could not initialize Gurobi model (" << GRBgeterrormsg(**environment) << ", error code " << error << ").";
+    }
+}
+
+template<typename ValueType, bool RawMode>
+GurobiLpSolver<ValueType, RawMode>::GurobiLpSolver(std::shared_ptr<GurobiEnvironment> const& environment, std::string const& name)
+    : GurobiLpSolver(environment, name, OptimizationDirection::Minimize) {
+    // Intentionally left empty.
+}
+
+template<typename ValueType, bool RawMode>
+GurobiLpSolver<ValueType, RawMode>::GurobiLpSolver(std::shared_ptr<GurobiEnvironment> const& environment, OptimizationDirection const& optDir)
+    : GurobiLpSolver(environment, "", optDir) {
+    // Intentionally left empty.
+}
+
+template<typename ValueType, bool RawMode>
+GurobiLpSolver<ValueType, RawMode>::GurobiLpSolver(std::shared_ptr<GurobiEnvironment> const& environment)
+    : GurobiLpSolver(environment, "", OptimizationDirection::Minimize) {
+    // Intentionally left empty.
+}
+
+template<typename ValueType, bool RawMode>
+GurobiLpSolver<ValueType, RawMode>::~GurobiLpSolver() {
+    // Dispose of the objects allocated inside Gurobi.
+    GRBfreemodel(model);
+}
+
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::update() const {
     int error = GRBupdatemodel(model);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to update Gurobi model (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to update Gurobi model (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     // Since the model changed, we erase the optimality flag.
     this->currentModelHasBeenOptimized = false;
 }
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addBoundedContinuousVariable(std::string const& name, ValueType lowerBound, ValueType upperBound,
-                                                                                     ValueType objectiveFunctionCoefficient) {
-    storm::expressions::Variable newVariable = this->manager->declareOrGetVariable(name, this->manager->getRationalType());
-    this->addVariable(newVariable, GRB_CONTINUOUS, storm::utility::convertNumber<double>(lowerBound), storm::utility::convertNumber<double>(upperBound),
-                      objectiveFunctionCoefficient);
-    return newVariable;
+template<typename ValueType, bool RawMode>
+char getGurobiType(typename GurobiLpSolver<ValueType, RawMode>::VariableType const& type) {
+    switch (type) {
+        case GurobiLpSolver<ValueType, RawMode>::VariableType::Continuous:
+            return GRB_CONTINUOUS;
+        case GurobiLpSolver<ValueType, RawMode>::VariableType::Integer:
+            return GRB_INTEGER;
+        case GurobiLpSolver<ValueType, RawMode>::VariableType::Binary:
+            return GRB_BINARY;
+    }
+    STORM_LOG_ASSERT(false, "Unexpected variable type.");
+    return -1;
 }
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addLowerBoundedContinuousVariable(std::string const& name, ValueType lowerBound,
-                                                                                          ValueType objectiveFunctionCoefficient) {
-    storm::expressions::Variable newVariable = this->manager->declareOrGetVariable(name, this->manager->getRationalType());
-    this->addVariable(newVariable, GRB_CONTINUOUS, storm::utility::convertNumber<double>(lowerBound), GRB_INFINITY, objectiveFunctionCoefficient);
-    return newVariable;
-}
+template<typename ValueType, bool RawMode>
+typename GurobiLpSolver<ValueType, RawMode>::Variable GurobiLpSolver<ValueType, RawMode>::addVariable(std::string const& name, VariableType const& type,
+                                                                                                      std::optional<ValueType> const& lowerBound,
+                                                                                                      std::optional<ValueType> const& upperBound,
+                                                                                                      ValueType objectiveFunctionCoefficient) {
+    Variable resultVar;
+    if constexpr (RawMode) {
+        resultVar = nextVariableIndex;
+    } else {
+        resultVar = this->declareOrGetExpressionVariable(name, type);
+        //  Assert whether the variable does not exist yet.
+        //  Due to incremental usage (push(), pop()), a variable might be declared in the manager but not in the lp model.
+        STORM_LOG_ASSERT(variableToIndexMap.count(resultVar) == 0, "Variable " << resultVar.getName() << " exists already in the model.");
+        this->variableToIndexMap.emplace(resultVar, nextVariableIndex);
+        if (!incrementalData.empty()) {
+            incrementalData.back().variables.push_back(resultVar);
+        }
+    }
+    ++nextVariableIndex;
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addUpperBoundedContinuousVariable(std::string const& name, ValueType upperBound,
-                                                                                          ValueType objectiveFunctionCoefficient) {
-    storm::expressions::Variable newVariable = this->manager->declareOrGetVariable(name, this->manager->getRationalType());
-    this->addVariable(newVariable, GRB_CONTINUOUS, -GRB_INFINITY, storm::utility::convertNumber<double>(upperBound), objectiveFunctionCoefficient);
-    return newVariable;
-}
-
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addUnboundedContinuousVariable(std::string const& name, ValueType objectiveFunctionCoefficient) {
-    storm::expressions::Variable newVariable = this->manager->declareOrGetVariable(name, this->manager->getRationalType());
-    this->addVariable(newVariable, GRB_CONTINUOUS, -GRB_INFINITY, GRB_INFINITY, objectiveFunctionCoefficient);
-    return newVariable;
-}
-
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addBoundedIntegerVariable(std::string const& name, ValueType lowerBound, ValueType upperBound,
-                                                                                  ValueType objectiveFunctionCoefficient) {
-    storm::expressions::Variable newVariable = this->manager->declareOrGetVariable(name, this->manager->getIntegerType());
-    this->addVariable(newVariable, GRB_INTEGER, storm::utility::convertNumber<double>(lowerBound), storm::utility::convertNumber<double>(upperBound),
-                      objectiveFunctionCoefficient);
-    return newVariable;
-}
-
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addLowerBoundedIntegerVariable(std::string const& name, ValueType lowerBound,
-                                                                                       ValueType objectiveFunctionCoefficient) {
-    storm::expressions::Variable newVariable = this->manager->declareOrGetVariable(name, this->manager->getIntegerType());
-    this->addVariable(newVariable, GRB_INTEGER, storm::utility::convertNumber<double>(lowerBound), GRB_INFINITY, objectiveFunctionCoefficient);
-    return newVariable;
-}
-
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addUpperBoundedIntegerVariable(std::string const& name, ValueType upperBound,
-                                                                                       ValueType objectiveFunctionCoefficient) {
-    storm::expressions::Variable newVariable = this->manager->declareOrGetVariable(name, this->manager->getIntegerType());
-    this->addVariable(newVariable, GRB_INTEGER, -GRB_INFINITY, storm::utility::convertNumber<double>(upperBound), objectiveFunctionCoefficient);
-    return newVariable;
-}
-
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addUnboundedIntegerVariable(std::string const& name, ValueType objectiveFunctionCoefficient) {
-    storm::expressions::Variable newVariable = this->manager->declareOrGetVariable(name, this->manager->getIntegerType());
-    this->addVariable(newVariable, GRB_INTEGER, -GRB_INFINITY, GRB_INFINITY, objectiveFunctionCoefficient);
-    return newVariable;
-}
-
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addBinaryVariable(std::string const& name, ValueType objectiveFunctionCoefficient) {
-    storm::expressions::Variable newVariable = this->manager->declareOrGetVariable(name, this->manager->getIntegerType());
-    this->addVariable(newVariable, GRB_BINARY, 0, 1, objectiveFunctionCoefficient);
-    return newVariable;
-}
-
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::addVariable(storm::expressions::Variable const& variable, char variableType, double lowerBound, double upperBound,
-                                            ValueType objectiveFunctionCoefficient) {
-    // Assert whether the variable does not exist yet.
-    // Due to incremental usage (push(), pop()), a variable might be declared in the manager but not in the lp model.
-    STORM_LOG_ASSERT(variableToIndexMap.count(variable) == 0, "Variable " << variable.getName() << " exists already in the model.");
-    // Check for valid variable type.
-    STORM_LOG_ASSERT(variableType == GRB_CONTINUOUS || variableType == GRB_INTEGER || variableType == GRB_BINARY,
-                     "Illegal type '" << variableType << "' for Gurobi variable.");
-
-    // Finally, create the actual variable.
+    // Create the actual variable.
     int error = 0;
     error = GRBaddvar(model, 0, nullptr, nullptr, storm::utility::convertNumber<double>(objectiveFunctionCoefficient),
-                      storm::utility::convertNumber<double>(lowerBound), storm::utility::convertNumber<double>(upperBound), variableType,
-                      variable.getName().c_str());
+                      lowerBound.has_value() ? storm::utility::convertNumber<double>(*lowerBound) : -GRB_INFINITY,
+                      upperBound.has_value() ? storm::utility::convertNumber<double>(*upperBound) : GRB_INFINITY, getGurobiType<ValueType, RawMode>(type),
+                      name.c_str());
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Could not create binary Gurobi variable (" << GRBgeterrormsg(env) << ", error code " << error << ").");
-    this->variableToIndexMap.emplace(variable, nextVariableIndex);
-    ++nextVariableIndex;
-    if (!incrementalData.empty()) {
-        incrementalData.back().variables.push_back(variable);
-    }
+                    "Could not create binary Gurobi variable (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
+    return resultVar;
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::addConstraint(std::string const& name, storm::expressions::Expression const& constraint) {
-    STORM_LOG_TRACE("Adding constraint " << (name == "" ? std::to_string(nextConstraintIndex) : name) << " to GurobiLpSolver:\n"
-                                         << "\t" << constraint);
-    STORM_LOG_THROW(constraint.isRelationalExpression(), storm::exceptions::InvalidArgumentException, "Illegal constraint is not a relational expression.");
-    STORM_LOG_THROW(constraint.getOperator() != storm::expressions::OperatorType::NotEqual, storm::exceptions::InvalidArgumentException,
-                    "Illegal constraint uses inequality operator.");
-
-    storm::expressions::LinearCoefficientVisitor::VariableCoefficients leftCoefficients =
-        storm::expressions::LinearCoefficientVisitor().getLinearCoefficients(constraint.getOperand(0));
-    storm::expressions::LinearCoefficientVisitor::VariableCoefficients rightCoefficients =
-        storm::expressions::LinearCoefficientVisitor().getLinearCoefficients(constraint.getOperand(1));
-    leftCoefficients.separateVariablesFromConstantPart(rightCoefficients);
-
-    // Now we need to transform the coefficients to the vector representation.
-    std::vector<int> variables;
+struct GurobiConstraint {
+    std::vector<int> variableIndices;
     std::vector<double> coefficients;
-    for (auto const& variableCoefficientPair : leftCoefficients) {
-        auto variableIndexPair = this->variableToIndexMap.find(variableCoefficientPair.first);
-        variables.push_back(variableIndexPair->second);
-        coefficients.push_back(leftCoefficients.getCoefficient(variableIndexPair->first));
-    }
+    char sense;
+    double rhs;
+};
 
+template<typename ValueType, bool RawMode>
+GurobiConstraint createConstraint(typename GurobiLpSolver<ValueType, RawMode>::Constraint const& constraint,
+                                  std::map<storm::expressions::Variable, int> const& variableToIndexMap) {
+    GurobiConstraint gurobiConstraint;
+    storm::expressions::RelationType relationType;
+    if constexpr (RawMode) {
+        gurobiConstraint.rhs = storm::utility::convertNumber<double>(constraint.rhs);
+        relationType = constraint.relationType;
+        gurobiConstraint.variableIndices.insert(gurobiConstraint.variableIndices.end(), constraint.lhsVariableIndices.begin(),
+                                                constraint.lhsVariableIndices.end());
+        gurobiConstraint.coefficients.reserve(constraint.lhsCoefficients.size());
+        for (auto const& coef : constraint.lhsCoefficients) {
+            gurobiConstraint.coefficients.push_back(storm::utility::convertNumber<double>(coef));
+        }
+    } else {
+        STORM_LOG_THROW(constraint.isRelationalExpression(), storm::exceptions::InvalidArgumentException, "Illegal constraint is not a relational expression.");
+        storm::expressions::LinearCoefficientVisitor::VariableCoefficients leftCoefficients =
+            storm::expressions::LinearCoefficientVisitor().getLinearCoefficients(constraint.getOperand(0));
+        storm::expressions::LinearCoefficientVisitor::VariableCoefficients rightCoefficients =
+            storm::expressions::LinearCoefficientVisitor().getLinearCoefficients(constraint.getOperand(1));
+        leftCoefficients.separateVariablesFromConstantPart(rightCoefficients);
+        gurobiConstraint.rhs = rightCoefficients.getConstantPart();
+        relationType = constraint.getBaseExpression().asBinaryRelationExpression().getRelationType();
+        int len = std::distance(leftCoefficients.begin(), leftCoefficients.end());
+        gurobiConstraint.variableIndices.reserve(len);
+        gurobiConstraint.coefficients.reserve(len);
+        for (auto const& variableCoefficientPair : leftCoefficients) {
+            auto variableIndexPair = variableToIndexMap.find(variableCoefficientPair.first);
+            gurobiConstraint.variableIndices.push_back(variableIndexPair->second);
+            gurobiConstraint.coefficients.push_back(variableCoefficientPair.second);
+        }
+    }
     // Determine the type of the constraint and add it properly.
-    int error = 0;
-    switch (constraint.getOperator()) {
-        case storm::expressions::OperatorType::Less:
-            error =
-                GRBaddconstr(model, variables.size(), variables.data(), coefficients.data(), GRB_LESS_EQUAL,
-                             rightCoefficients.getConstantPart() - storm::settings::getModule<storm::settings::modules::GurobiSettings>().getIntegerTolerance(),
-                             name == "" ? nullptr : name.c_str());
+    switch (relationType) {
+        case storm::expressions::RelationType::Less:
+            gurobiConstraint.sense = GRB_LESS_EQUAL;
+            gurobiConstraint.rhs -= storm::settings::getModule<storm::settings::modules::GurobiSettings>().getIntegerTolerance();
             break;
-        case storm::expressions::OperatorType::LessOrEqual:
-            error = GRBaddconstr(model, variables.size(), variables.data(), coefficients.data(), GRB_LESS_EQUAL, rightCoefficients.getConstantPart(),
-                                 name == "" ? nullptr : name.c_str());
+        case storm::expressions::RelationType::LessOrEqual:
+            gurobiConstraint.sense = GRB_LESS_EQUAL;
             break;
-        case storm::expressions::OperatorType::Greater:
-            error =
-                GRBaddconstr(model, variables.size(), variables.data(), coefficients.data(), GRB_GREATER_EQUAL,
-                             rightCoefficients.getConstantPart() + storm::settings::getModule<storm::settings::modules::GurobiSettings>().getIntegerTolerance(),
-                             name == "" ? nullptr : name.c_str());
+        case storm::expressions::RelationType::Greater:
+            gurobiConstraint.sense = GRB_GREATER_EQUAL;
+            gurobiConstraint.rhs += storm::settings::getModule<storm::settings::modules::GurobiSettings>().getIntegerTolerance();
             break;
-        case storm::expressions::OperatorType::GreaterOrEqual:
-            error = GRBaddconstr(model, variables.size(), variables.data(), coefficients.data(), GRB_GREATER_EQUAL, rightCoefficients.getConstantPart(),
-                                 name == "" ? nullptr : name.c_str());
+        case storm::expressions::RelationType::GreaterOrEqual:
+            gurobiConstraint.sense = GRB_GREATER_EQUAL;
             break;
-        case storm::expressions::OperatorType::Equal:
-            error = GRBaddconstr(model, variables.size(), variables.data(), coefficients.data(), GRB_EQUAL, rightCoefficients.getConstantPart(),
-                                 name == "" ? nullptr : name.c_str());
+        case storm::expressions::RelationType::Equal:
+            gurobiConstraint.sense = GRB_EQUAL;
             break;
         default:
             STORM_LOG_ASSERT(false, "Illegal operator in LP solver constraint.");
     }
-    ++nextConstraintIndex;
-    STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Could not assert constraint (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+    return gurobiConstraint;
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::optimize() const {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::addConstraint(std::string const& name, Constraint const& constraint) {
+    if constexpr (!RawMode) {
+        STORM_LOG_TRACE("Adding constraint " << name << " to GurobiLpSolver:\n"
+                                             << "\t" << constraint);
+        STORM_LOG_ASSERT(constraint.getManager() == this->getManager(), "Constraint was not built over the proper variables.");
+    }
+
+    // Extract constraint data
+    auto grbConstr = createConstraint<ValueType, RawMode>(constraint, this->variableToIndexMap);
+    int error = GRBaddconstr(model, grbConstr.variableIndices.size(), grbConstr.variableIndices.data(), grbConstr.coefficients.data(), grbConstr.sense,
+                             grbConstr.rhs, name == "" ? nullptr : name.c_str());
+    STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
+                    "Could not assert constraint (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
+}
+
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::addIndicatorConstraint(std::string const& name, Variable indicatorVariable, bool indicatorValue,
+                                                                Constraint const& constraint) {
+    int indVar;
+    // Extract constraint data
+    if constexpr (RawMode) {
+        indVar = indicatorVariable;
+    } else {
+        STORM_LOG_ASSERT(this->variableToIndexMap.count(indicatorVariable) > 0, "Indicator Variable " << indicatorVariable.getName() << " unknown to solver.");
+        STORM_LOG_ASSERT(indicatorVariable.hasIntegerType(), "Indicator Variable " << indicatorVariable.getName() << " has unexpected type.");
+        STORM_LOG_ASSERT(constraint.getManager() == this->getManager(), "Constraint was not built over the proper variables.");
+        STORM_LOG_TRACE("Adding Indicator constraint " << name << " to GurobiLpSolver:\n"
+                                                       << "\t(" << indicatorVariable.getName() << "==" << indicatorValue << ") implies " << constraint);
+        indVar = this->variableToIndexMap.at(indicatorVariable);
+    }
+    int indVal = indicatorValue ? 1 : 0;
+    auto grbConstr = createConstraint<ValueType, RawMode>(constraint, this->variableToIndexMap);
+    // Gurobi considers indicator constraints as a certain kind of what they call "general constraints".
+    int error = GRBaddgenconstrIndicator(model, name == "" ? nullptr : name.c_str(), indVar, indVal, grbConstr.variableIndices.size(),
+                                         grbConstr.variableIndices.data(), grbConstr.coefficients.data(), grbConstr.sense, grbConstr.rhs);
+    STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
+                    "Could not assert constraint (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
+}
+
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::optimize() const {
     // First incorporate all recent changes.
     this->update();
 
     // Set the most recently set model sense.
     int error = GRBsetintattr(model, "ModelSense", this->getOptimizationDirection() == OptimizationDirection::Minimize ? 1 : -1);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to set Gurobi model sense (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to set Gurobi model sense (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     // Then we actually optimize the model.
     error = GRBoptimize(model);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to optimize Gurobi model (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to optimize Gurobi model (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     this->currentModelHasBeenOptimized = true;
 }
 
-template<typename ValueType>
-bool GurobiLpSolver<ValueType>::isInfeasible() const {
+template<typename ValueType, bool RawMode>
+bool GurobiLpSolver<ValueType, RawMode>::isInfeasible() const {
     if (!this->currentModelHasBeenOptimized) {
-        throw storm::exceptions::InvalidStateException() << "Illegal call to GurobiLpSolver<ValueType>::isInfeasible: model has not been optimized.";
+        throw storm::exceptions::InvalidStateException() << "Illegal call to GurobiLpSolver<ValueType, RawMode>::isInfeasible: model has not been optimized.";
     }
 
     int optimalityStatus = 0;
 
     int error = GRBgetintattr(model, GRB_INT_ATTR_STATUS, &optimalityStatus);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to retrieve optimization status of Gurobi model (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to retrieve optimization status of Gurobi model (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     // By default, Gurobi may tell us only that the model is either infeasible or unbounded. To decide which one
     // it is, we need to perform an extra step.
     if (optimalityStatus == GRB_INF_OR_UNBD) {
         error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_DUALREDUCTIONS, 0);
         STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                        "Unable to set Gurobi parameter (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                        "Unable to set Gurobi parameter (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
         this->optimize();
 
         error = GRBgetintattr(model, GRB_INT_ATTR_STATUS, &optimalityStatus);
         STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                        "Unable to retrieve optimization status of Gurobi model (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                        "Unable to retrieve optimization status of Gurobi model (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
         error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_DUALREDUCTIONS, 1);
         STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                        "Unable to set Gurobi parameter (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                        "Unable to set Gurobi parameter (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
     }
 
     return optimalityStatus == GRB_INFEASIBLE;
 }
 
-template<typename ValueType>
-bool GurobiLpSolver<ValueType>::isUnbounded() const {
+template<typename ValueType, bool RawMode>
+bool GurobiLpSolver<ValueType, RawMode>::isUnbounded() const {
     if (!this->currentModelHasBeenOptimized) {
-        throw storm::exceptions::InvalidStateException() << "Illegal call to GurobiLpSolver<ValueType>::isUnbounded: model has not been optimized.";
+        throw storm::exceptions::InvalidStateException() << "Illegal call to GurobiLpSolver<ValueType, RawMode>::isUnbounded: model has not been optimized.";
     }
 
     int optimalityStatus = 0;
 
     int error = GRBgetintattr(model, GRB_INT_ATTR_STATUS, &optimalityStatus);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to retrieve optimization status of Gurobi model (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to retrieve optimization status of Gurobi model (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     // By default, Gurobi may tell us only that the model is either infeasible or unbounded. To decide which one
     // it is, we need to perform an extra step.
     if (optimalityStatus == GRB_INF_OR_UNBD) {
         error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_DUALREDUCTIONS, 0);
         STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                        "Unable to set Gurobi parameter (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                        "Unable to set Gurobi parameter (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
         this->optimize();
 
         error = GRBgetintattr(model, GRB_INT_ATTR_STATUS, &optimalityStatus);
         STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                        "Unable to retrieve optimization status of Gurobi model (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                        "Unable to retrieve optimization status of Gurobi model (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
         error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_DUALREDUCTIONS, 1);
         STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                        "Unable to set Gurobi parameter (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                        "Unable to set Gurobi parameter (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
     }
 
     return optimalityStatus == GRB_UNBOUNDED;
 }
 
-template<typename ValueType>
-bool GurobiLpSolver<ValueType>::isOptimal() const {
+template<typename ValueType, bool RawMode>
+bool GurobiLpSolver<ValueType, RawMode>::isOptimal() const {
     if (!this->currentModelHasBeenOptimized) {
         return false;
     }
@@ -354,53 +378,61 @@ bool GurobiLpSolver<ValueType>::isOptimal() const {
 
     int error = GRBgetintattr(model, GRB_INT_ATTR_STATUS, &optimalityStatus);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to retrieve optimization status of Gurobi model (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to retrieve optimization status of Gurobi model (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     return optimalityStatus == GRB_OPTIMAL;
 }
 
-template<typename ValueType>
-ValueType GurobiLpSolver<ValueType>::getContinuousValue(storm::expressions::Variable const& variable) const {
+template<typename ValueType, bool RawMode>
+ValueType GurobiLpSolver<ValueType, RawMode>::getContinuousValue(Variable const& variable) const {
     if (!this->isOptimal()) {
         STORM_LOG_THROW(!this->isInfeasible(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(!this->isUnbounded(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(false, storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(**environment) << ").");
     }
 
-    auto variableIndexPair = this->variableToIndexMap.find(variable);
-    STORM_LOG_THROW(variableIndexPair != this->variableToIndexMap.end(), storm::exceptions::InvalidAccessException,
-                    "Accessing value of unknown variable '" << variable.getName() << "'.");
+    int varIndex;
+    if constexpr (RawMode) {
+        varIndex = variable;
+    } else {
+        STORM_LOG_ASSERT(variableToIndexMap.count(variable) != 0, "Accessing value of unknown variable '" << variable.getName() << "'.");
+        varIndex = variableToIndexMap.at(variable);
+    }
 
     double value = 0;
-    int error = GRBgetdblattrelement(model, GRB_DBL_ATTR_X, variableIndexPair->second, &value);
+    int error = GRBgetdblattrelement(model, GRB_DBL_ATTR_X, varIndex, &value);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to get Gurobi solution (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to get Gurobi solution (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     return storm::utility::convertNumber<ValueType>(value);
 }
 
-template<typename ValueType>
-int_fast64_t GurobiLpSolver<ValueType>::getIntegerValue(storm::expressions::Variable const& variable) const {
+template<typename ValueType, bool RawMode>
+int_fast64_t GurobiLpSolver<ValueType, RawMode>::getIntegerValue(Variable const& variable) const {
     if (!this->isOptimal()) {
         STORM_LOG_THROW(!this->isInfeasible(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(!this->isUnbounded(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(false, storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(**environment) << ").");
     }
 
-    auto variableIndexPair = this->variableToIndexMap.find(variable);
-    STORM_LOG_THROW(variableIndexPair != this->variableToIndexMap.end(), storm::exceptions::InvalidAccessException,
-                    "Accessing value of unknown variable '" << variable.getName() << "'.");
+    int varIndex;
+    if constexpr (RawMode) {
+        varIndex = variable;
+    } else {
+        STORM_LOG_ASSERT(variableToIndexMap.count(variable) != 0, "Accessing value of unknown variable '" << variable.getName() << "'.");
+        varIndex = variableToIndexMap.at(variable);
+    }
 
     double value = 0;
-    int error = GRBgetdblattrelement(model, GRB_DBL_ATTR_X, variableIndexPair->second, &value);
+    int error = GRBgetdblattrelement(model, GRB_DBL_ATTR_X, varIndex, &value);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to get Gurobi solution (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to get Gurobi solution (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
     double roundedValue = std::round(value);
     double diff = std::abs(roundedValue - value);
     STORM_LOG_ERROR_COND(diff <= storm::settings::getModule<storm::settings::modules::GurobiSettings>().getIntegerTolerance(),
@@ -408,25 +440,29 @@ int_fast64_t GurobiLpSolver<ValueType>::getIntegerValue(storm::expressions::Vari
     return static_cast<int_fast64_t>(roundedValue);
 }
 
-template<typename ValueType>
-bool GurobiLpSolver<ValueType>::getBinaryValue(storm::expressions::Variable const& variable) const {
+template<typename ValueType, bool RawMode>
+bool GurobiLpSolver<ValueType, RawMode>::getBinaryValue(Variable const& variable) const {
     if (!this->isOptimal()) {
         STORM_LOG_THROW(!this->isInfeasible(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(!this->isUnbounded(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(false, storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(**environment) << ").");
     }
 
-    auto variableIndexPair = this->variableToIndexMap.find(variable);
-    STORM_LOG_THROW(variableIndexPair != this->variableToIndexMap.end(), storm::exceptions::InvalidAccessException,
-                    "Accessing value of unknown variable '" << variable.getName() << "'.");
+    int varIndex;
+    if constexpr (RawMode) {
+        varIndex = variable;
+    } else {
+        STORM_LOG_ASSERT(variableToIndexMap.count(variable) != 0, "Accessing value of unknown variable '" << variable.getName() << "'.");
+        varIndex = variableToIndexMap.at(variable);
+    }
 
     double value = 0;
-    int error = GRBgetdblattrelement(model, GRB_DBL_ATTR_X, variableIndexPair->second, &value);
+    int error = GRBgetdblattrelement(model, GRB_DBL_ATTR_X, varIndex, &value);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to get Gurobi solution (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to get Gurobi solution (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     if (value > 0.5) {
         STORM_LOG_ERROR_COND(std::abs(value - 1.0) <= storm::settings::getModule<storm::settings::modules::GurobiSettings>().getIntegerTolerance(),
@@ -439,58 +475,62 @@ bool GurobiLpSolver<ValueType>::getBinaryValue(storm::expressions::Variable cons
     }
 }
 
-template<typename ValueType>
-ValueType GurobiLpSolver<ValueType>::getObjectiveValue() const {
+template<typename ValueType, bool RawMode>
+ValueType GurobiLpSolver<ValueType, RawMode>::getObjectiveValue() const {
     if (!this->isOptimal()) {
         STORM_LOG_THROW(!this->isInfeasible(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(!this->isUnbounded(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(false, storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(**environment) << ").");
     }
 
     double value = 0;
     int error = GRBgetdblattr(model, GRB_DBL_ATTR_OBJVAL, &value);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to get Gurobi solution (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to get Gurobi solution (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     return storm::utility::convertNumber<ValueType>(value);
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::writeModelToFile(std::string const& filename) const {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::writeModelToFile(std::string const& filename) const {
     int error = GRBwrite(model, filename.c_str());
     if (error) {
-        STORM_LOG_ERROR("Unable to write Gurobi model (" << GRBgeterrormsg(env) << ", error code " << error << ") to file.");
-        throw storm::exceptions::InvalidStateException() << "Unable to write Gurobi model (" << GRBgeterrormsg(env) << ", error code " << error << ") to file.";
+        STORM_LOG_ERROR("Unable to write Gurobi model (" << GRBgeterrormsg(**environment) << ", error code " << error << ") to file.");
+        throw storm::exceptions::InvalidStateException()
+            << "Unable to write Gurobi model (" << GRBgeterrormsg(**environment) << ", error code " << error << ") to file.";
     }
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::toggleOutput(bool set) const {
-    int error = GRBsetintparam(env, "OutputFlag", set);
-    STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to set Gurobi Parameter OutputFlag (" << GRBgeterrormsg(env) << ", error code " << error << ").");
-}
-
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::push() {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::push() {
     IncrementalLevel lvl;
-    lvl.firstConstraintIndex = nextConstraintIndex;
+    int num;
+    GRBgetintattr(model, GRB_INT_ATTR_NUMCONSTRS, &num);
+    lvl.firstConstraintIndex = num;
+    GRBgetintattr(model, GRB_INT_ATTR_NUMGENCONSTRS, &num);
+    lvl.firstGenConstraintIndex = num;
     incrementalData.push_back(lvl);
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::pop() {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::pop() {
     if (incrementalData.empty()) {
         STORM_LOG_ERROR("Tried to pop from a solver without pushing before.");
     } else {
         IncrementalLevel const& lvl = incrementalData.back();
-
-        std::vector<int> indicesToBeRemoved = storm::utility::vector::buildVectorForRange(lvl.firstConstraintIndex, nextConstraintIndex);
-        GRBdelconstrs(model, indicesToBeRemoved.size(), indicesToBeRemoved.data());
-        nextConstraintIndex = lvl.firstConstraintIndex;
+        int num;
+        GRBgetintattr(model, GRB_INT_ATTR_NUMCONSTRS, &num);
+        std::vector<int> indicesToBeRemoved = storm::utility::vector::buildVectorForRange(lvl.firstConstraintIndex, num);
+        int error = GRBdelconstrs(model, indicesToBeRemoved.size(), indicesToBeRemoved.data());
+        STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
+                        "Unable to delete constraints (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
+        GRBgetintattr(model, GRB_INT_ATTR_NUMGENCONSTRS, &num);
+        indicesToBeRemoved = storm::utility::vector::buildVectorForRange(lvl.firstGenConstraintIndex, num);
+        STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
+                        "Unable to delete general constraints (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
         indicesToBeRemoved.clear();
 
         if (!lvl.variables.empty()) {
@@ -507,81 +547,102 @@ void GurobiLpSolver<ValueType>::pop() {
                 }
             }
             std::vector<int> indicesToBeRemoved = storm::utility::vector::buildVectorForRange(firstIndex, nextVariableIndex);
-            GRBdelvars(model, indicesToBeRemoved.size(), indicesToBeRemoved.data());
+            error = GRBdelvars(model, indicesToBeRemoved.size(), indicesToBeRemoved.data());
+            STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
+                            "Unable to delete variables (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
             nextVariableIndex = firstIndex;
         }
-        incrementalData.pop_back();
         update();
+        // Assert that indices are as expected
+        GRBgetintattr(model, GRB_INT_ATTR_NUMCONSTRS, &num);
+        STORM_LOG_THROW(lvl.firstConstraintIndex == num, storm::exceptions::InvalidStateException, "Unexpected number of constraints after deletion.");
+        GRBgetintattr(model, GRB_INT_ATTR_NUMGENCONSTRS, &num);
+        STORM_LOG_THROW(lvl.firstGenConstraintIndex == num, storm::exceptions::InvalidStateException,
+                        "Unexpected number of general constraints after deletion.");
+        GRBgetintattr(model, GRB_INT_ATTR_NUMVARS, &num);
+        STORM_LOG_THROW(nextVariableIndex == num, storm::exceptions::InvalidStateException, "Unexpected number ofvariables after deletion.");
+
+        incrementalData.pop_back();
     }
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::setMaximalSolutionCount(uint64_t value) {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::setMaximalSolutionCount(uint64_t value) {
     int error = GRBsetintparam(GRBgetenv(model), "PoolSolutions", value);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to set Gurobi Parameter PoolSolutions (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to set Gurobi Parameter PoolSolutions (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 }
 
-template<typename ValueType>
-uint64_t GurobiLpSolver<ValueType>::getSolutionCount() const {
+template<typename ValueType, bool RawMode>
+uint64_t GurobiLpSolver<ValueType, RawMode>::getSolutionCount() const {
     STORM_LOG_THROW(this->currentModelHasBeenOptimized, storm::exceptions::InvalidStateException,
-                    "Illegal call to GurobiLpSolver<ValueType>::getSolutionCount: model has not been optimized.");
+                    "Illegal call to GurobiLpSolver<ValueType, RawMode>::getSolutionCount: model has not been optimized.");
     int result = -1;
     int error = GRBgetintattr(model, "SolCount", &result);
     STORM_LOG_THROW(error == 0 && result >= 0, storm::exceptions::InvalidStateException, "Unable to get solution count or invalid number of solutions.");
     return result;
 }
 
-template<typename ValueType>
-ValueType GurobiLpSolver<ValueType>::getContinuousValue(storm::expressions::Variable const& variable, uint64_t const& solutionIndex) const {
+template<typename ValueType, bool RawMode>
+ValueType GurobiLpSolver<ValueType, RawMode>::getContinuousValue(Variable const& variable, uint64_t const& solutionIndex) const {
     if (!this->isOptimal()) {
         STORM_LOG_THROW(!this->isInfeasible(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(!this->isUnbounded(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(false, storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(**environment) << ").");
     }
     STORM_LOG_ASSERT(solutionIndex < getSolutionCount(), "Invalid solution index.");
 
-    auto variableIndexPair = this->variableToIndexMap.find(variable);
-    STORM_LOG_THROW(variableIndexPair != this->variableToIndexMap.end(), storm::exceptions::InvalidAccessException,
-                    "Accessing value of unknown variable '" << variable.getName() << "'.");
+    int varIndex;
+    if constexpr (RawMode) {
+        varIndex = variable;
+    } else {
+        STORM_LOG_THROW(variableToIndexMap.count(variable) != 0, storm::exceptions::InvalidAccessException,
+                        "Accessing value of unknown variable '" << variable.getName() << "'.");
+        varIndex = variableToIndexMap.at(variable);
+    }
 
     double value = 0;
     int error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_SOLUTIONNUMBER, solutionIndex);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to set Gurobi solution index (" << GRBgeterrormsg(env) << ", error code " << error << ").");
-    error = GRBgetdblattrelement(model, GRB_DBL_ATTR_Xn, variableIndexPair->second, &value);
+                    "Unable to set Gurobi solution index (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
+    error = GRBgetdblattrelement(model, GRB_DBL_ATTR_Xn, varIndex, &value);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to get Gurobi solution (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to get Gurobi solution (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     return storm::utility::convertNumber<ValueType>(value);
 }
 
-template<typename ValueType>
-int_fast64_t GurobiLpSolver<ValueType>::getIntegerValue(storm::expressions::Variable const& variable, uint64_t const& solutionIndex) const {
+template<typename ValueType, bool RawMode>
+int_fast64_t GurobiLpSolver<ValueType, RawMode>::getIntegerValue(Variable const& variable, uint64_t const& solutionIndex) const {
     if (!this->isOptimal()) {
         STORM_LOG_THROW(!this->isInfeasible(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(!this->isUnbounded(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(false, storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(**environment) << ").");
     }
     STORM_LOG_ASSERT(solutionIndex < getSolutionCount(), "Invalid solution index.");
 
-    auto variableIndexPair = this->variableToIndexMap.find(variable);
-    STORM_LOG_THROW(variableIndexPair != this->variableToIndexMap.end(), storm::exceptions::InvalidAccessException,
-                    "Accessing value of unknown variable '" << variable.getName() << "'.");
+    int varIndex;
+    if constexpr (RawMode) {
+        varIndex = variable;
+    } else {
+        STORM_LOG_THROW(variableToIndexMap.count(variable) != 0, storm::exceptions::InvalidAccessException,
+                        "Accessing value of unknown variable '" << variable.getName() << "'.");
+        varIndex = variableToIndexMap.at(variable);
+    }
 
     double value = 0;
     int error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_SOLUTIONNUMBER, solutionIndex);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to set Gurobi solution index (" << GRBgeterrormsg(env) << ", error code " << error << ").");
-    error = GRBgetdblattrelement(model, GRB_DBL_ATTR_Xn, variableIndexPair->second, &value);
+                    "Unable to set Gurobi solution index (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
+    error = GRBgetdblattrelement(model, GRB_DBL_ATTR_Xn, varIndex, &value);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to get Gurobi solution (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to get Gurobi solution (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
     double roundedValue = std::round(value);
     double diff = std::abs(roundedValue - value);
     STORM_LOG_ERROR_COND(diff <= storm::settings::getModule<storm::settings::modules::GurobiSettings>().getIntegerTolerance(),
@@ -589,29 +650,34 @@ int_fast64_t GurobiLpSolver<ValueType>::getIntegerValue(storm::expressions::Vari
     return static_cast<int_fast64_t>(roundedValue);
 }
 
-template<typename ValueType>
-bool GurobiLpSolver<ValueType>::getBinaryValue(storm::expressions::Variable const& variable, uint64_t const& solutionIndex) const {
+template<typename ValueType, bool RawMode>
+bool GurobiLpSolver<ValueType, RawMode>::getBinaryValue(Variable const& variable, uint64_t const& solutionIndex) const {
     if (!this->isOptimal()) {
         STORM_LOG_THROW(!this->isInfeasible(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(!this->isUnbounded(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(false, storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(**environment) << ").");
     }
     STORM_LOG_ASSERT(solutionIndex < getSolutionCount(), "Invalid solution index.");
 
-    auto variableIndexPair = this->variableToIndexMap.find(variable);
-    STORM_LOG_THROW(variableIndexPair != this->variableToIndexMap.end(), storm::exceptions::InvalidAccessException,
-                    "Accessing value of unknown variable '" << variable.getName() << "'.");
+    int varIndex;
+    if constexpr (RawMode) {
+        varIndex = variable;
+    } else {
+        STORM_LOG_THROW(variableToIndexMap.count(variable) != 0, storm::exceptions::InvalidAccessException,
+                        "Accessing value of unknown variable '" << variable.getName() << "'.");
+        varIndex = variableToIndexMap.at(variable);
+    }
 
     double value = 0;
     int error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_SOLUTIONNUMBER, solutionIndex);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to set Gurobi solution index (" << GRBgeterrormsg(env) << ", error code " << error << ").");
-    error = GRBgetdblattrelement(model, GRB_DBL_ATTR_Xn, variableIndexPair->second, &value);
+                    "Unable to set Gurobi solution index (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
+    error = GRBgetdblattrelement(model, GRB_DBL_ATTR_Xn, varIndex, &value);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to get Gurobi solution (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to get Gurobi solution (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     if (value > 0.5) {
         STORM_LOG_ERROR_COND(std::abs(value - 1) <= storm::settings::getModule<storm::settings::modules::GurobiSettings>().getIntegerTolerance(),
@@ -624,31 +690,31 @@ bool GurobiLpSolver<ValueType>::getBinaryValue(storm::expressions::Variable cons
     }
 }
 
-template<typename ValueType>
-ValueType GurobiLpSolver<ValueType>::getObjectiveValue(uint64_t const& solutionIndex) const {
+template<typename ValueType, bool RawMode>
+ValueType GurobiLpSolver<ValueType, RawMode>::getObjectiveValue(uint64_t solutionIndex) const {
     if (!this->isOptimal()) {
         STORM_LOG_THROW(!this->isInfeasible(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from infeasible model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(!this->isUnbounded(), storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unbounded model (" << GRBgeterrormsg(**environment) << ").");
         STORM_LOG_THROW(false, storm::exceptions::InvalidAccessException,
-                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(env) << ").");
+                        "Unable to get Gurobi solution from unoptimized model (" << GRBgeterrormsg(**environment) << ").");
     }
     STORM_LOG_ASSERT(solutionIndex < getSolutionCount(), "Invalid solution index.");
 
     double value = 0;
     int error = GRBsetintparam(GRBgetenv(model), GRB_INT_PAR_SOLUTIONNUMBER, solutionIndex);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to set Gurobi solution index (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to set Gurobi solution index (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
     error = GRBgetdblattr(model, GRB_DBL_ATTR_POOLOBJVAL, &value);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to get Gurobi solution (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to get Gurobi solution (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 
     return storm::utility::convertNumber<ValueType>(value);
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::setMaximalMILPGap(ValueType const& gap, bool relative) {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::setMaximalMILPGap(ValueType const& gap, bool relative) {
     int error = -1;
     if (relative) {
         error = GRBsetdblparam(GRBgetenv(model), GRB_DBL_PAR_MIPGAP, storm::utility::convertNumber<double>(gap));
@@ -656,15 +722,15 @@ void GurobiLpSolver<ValueType>::setMaximalMILPGap(ValueType const& gap, bool rel
         error = GRBsetdblparam(GRBgetenv(model), GRB_DBL_PAR_MIPGAPABS, storm::utility::convertNumber<double>(gap));
     }
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to set Gurobi MILP GAP (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to set Gurobi MILP GAP (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
 }
 
-template<typename ValueType>
-ValueType GurobiLpSolver<ValueType>::getMILPGap(bool relative) const {
+template<typename ValueType, bool RawMode>
+ValueType GurobiLpSolver<ValueType, RawMode>::getMILPGap(bool relative) const {
     double relativeGap;
     int error = GRBgetdblattr(model, GRB_DBL_ATTR_MIPGAP, &relativeGap);
     STORM_LOG_THROW(error == 0, storm::exceptions::InvalidStateException,
-                    "Unable to get Gurobi MILP GAP (" << GRBgeterrormsg(env) << ", error code " << error << ").");
+                    "Unable to get Gurobi MILP GAP (" << GRBgeterrormsg(**environment) << ", error code " << error << ").");
     auto result = storm::utility::convertNumber<ValueType>(relativeGap);
     if (relative) {
         return result;
@@ -674,221 +740,212 @@ ValueType GurobiLpSolver<ValueType>::getMILPGap(bool relative) const {
 }
 
 #else
-template<typename ValueType>
-GurobiLpSolver<ValueType>::GurobiLpSolver(std::string const&, OptimizationDirection const&) {
+template<typename ValueType, bool RawMode>
+GurobiLpSolver<ValueType, RawMode>::GurobiLpSolver(std::shared_ptr<GurobiEnvironment> const&, std::string const&, OptimizationDirection const&) {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-GurobiLpSolver<ValueType>::GurobiLpSolver(std::string const&) {
+template<typename ValueType, bool RawMode>
+GurobiLpSolver<ValueType, RawMode>::GurobiLpSolver(std::shared_ptr<GurobiEnvironment> const&, std::string const&) {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-GurobiLpSolver<ValueType>::GurobiLpSolver(OptimizationDirection const&) {
+template<typename ValueType, bool RawMode>
+GurobiLpSolver<ValueType, RawMode>::GurobiLpSolver(std::shared_ptr<GurobiEnvironment> const&, OptimizationDirection const&) {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-GurobiLpSolver<ValueType>::GurobiLpSolver() {
+template<typename ValueType, bool RawMode>
+GurobiLpSolver<ValueType, RawMode>::GurobiLpSolver(std::shared_ptr<GurobiEnvironment> const&) {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-GurobiLpSolver<ValueType>::~GurobiLpSolver() {}
+template<typename ValueType, bool RawMode>
+GurobiLpSolver<ValueType, RawMode>::~GurobiLpSolver() {}
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addBoundedContinuousVariable(std::string const&, ValueType, ValueType, ValueType) {
+template<typename ValueType, bool RawMode>
+typename GurobiLpSolver<ValueType, RawMode>::Variable GurobiLpSolver<ValueType, RawMode>::addVariable(std::string const&, VariableType const&,
+                                                                                                      std::optional<ValueType> const&,
+                                                                                                      std::optional<ValueType> const&, ValueType) {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addLowerBoundedContinuousVariable(std::string const&, ValueType, ValueType) {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::update() const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addUpperBoundedContinuousVariable(std::string const&, ValueType, ValueType) {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::addConstraint(std::string const&, Constraint const&) {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addUnboundedContinuousVariable(std::string const&, ValueType) {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::addIndicatorConstraint(std::string const&, Variable, bool, Constraint const&) {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addBoundedIntegerVariable(std::string const&, ValueType, ValueType, ValueType) {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::optimize() const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addLowerBoundedIntegerVariable(std::string const&, ValueType, ValueType) {
+template<typename ValueType, bool RawMode>
+bool GurobiLpSolver<ValueType, RawMode>::isInfeasible() const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addUpperBoundedIntegerVariable(std::string const&, ValueType, ValueType) {
+template<typename ValueType, bool RawMode>
+bool GurobiLpSolver<ValueType, RawMode>::isUnbounded() const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addUnboundedIntegerVariable(std::string const&, ValueType) {
+template<typename ValueType, bool RawMode>
+bool GurobiLpSolver<ValueType, RawMode>::isOptimal() const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-storm::expressions::Variable GurobiLpSolver<ValueType>::addBinaryVariable(std::string const&, ValueType) {
+template<typename ValueType, bool RawMode>
+ValueType GurobiLpSolver<ValueType, RawMode>::getContinuousValue(Variable const&) const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::update() const {
+template<typename ValueType, bool RawMode>
+int_fast64_t GurobiLpSolver<ValueType, RawMode>::getIntegerValue(Variable const&) const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::addConstraint(std::string const&, storm::expressions::Expression const&) {
+template<typename ValueType, bool RawMode>
+bool GurobiLpSolver<ValueType, RawMode>::getBinaryValue(Variable const&) const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::optimize() const {
+template<typename ValueType, bool RawMode>
+ValueType GurobiLpSolver<ValueType, RawMode>::getObjectiveValue() const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-bool GurobiLpSolver<ValueType>::isInfeasible() const {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::writeModelToFile(std::string const&) const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-bool GurobiLpSolver<ValueType>::isUnbounded() const {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::push() {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-bool GurobiLpSolver<ValueType>::isOptimal() const {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::pop() {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of support with Gurobi support.";
 }
 
-template<typename ValueType>
-ValueType GurobiLpSolver<ValueType>::getContinuousValue(storm::expressions::Variable const&) const {
-    throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
-                                                          "requires this support. Please choose a version of support with Gurobi support.";
-}
-
-template<typename ValueType>
-int_fast64_t GurobiLpSolver<ValueType>::getIntegerValue(storm::expressions::Variable const&) const {
-    throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
-                                                          "requires this support. Please choose a version of support with Gurobi support.";
-}
-
-template<typename ValueType>
-bool GurobiLpSolver<ValueType>::getBinaryValue(storm::expressions::Variable const&) const {
-    throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
-                                                          "requires this support. Please choose a version of support with Gurobi support.";
-}
-
-template<typename ValueType>
-ValueType GurobiLpSolver<ValueType>::getObjectiveValue() const {
-    throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
-                                                          "requires this support. Please choose a version of support with Gurobi support.";
-}
-
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::writeModelToFile(std::string const&) const {
-    throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
-                                                          "requires this support. Please choose a version of support with Gurobi support.";
-}
-
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::toggleOutput(bool) const {
-    throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
-                                                          "requires this support. Please choose a version of support with Gurobi support.";
-}
-
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::push() {
-    throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
-                                                          "requires this support. Please choose a version of support with Gurobi support.";
-}
-
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::pop() {
-    throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
-                                                          "requires this support. Please choose a version of support with Gurobi support.";
-}
-
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::setMaximalSolutionCount(uint64_t) {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::setMaximalSolutionCount(uint64_t) {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of storm with Gurobi support.";
 }
 
-template<typename ValueType>
-uint64_t GurobiLpSolver<ValueType>::getSolutionCount() const {
+template<typename ValueType, bool RawMode>
+uint64_t GurobiLpSolver<ValueType, RawMode>::getSolutionCount() const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of storm with Gurobi support.";
 }
 
-template<typename ValueType>
-ValueType GurobiLpSolver<ValueType>::getContinuousValue(storm::expressions::Variable const&, uint64_t const&) const {
+template<typename ValueType, bool RawMode>
+ValueType GurobiLpSolver<ValueType, RawMode>::getContinuousValue(Variable const&, uint64_t const&) const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of storm with Gurobi support.";
 }
 
-template<typename ValueType>
-int_fast64_t GurobiLpSolver<ValueType>::getIntegerValue(storm::expressions::Variable const&, uint64_t const&) const {
+template<typename ValueType, bool RawMode>
+int_fast64_t GurobiLpSolver<ValueType, RawMode>::getIntegerValue(Variable const&, uint64_t const&) const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of storm with Gurobi support.";
 }
 
-template<typename ValueType>
-bool GurobiLpSolver<ValueType>::getBinaryValue(storm::expressions::Variable const&, uint64_t const&) const {
+template<typename ValueType, bool RawMode>
+bool GurobiLpSolver<ValueType, RawMode>::getBinaryValue(Variable const&, uint64_t const&) const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of storm with Gurobi support.";
 }
 
-template<typename ValueType>
-ValueType GurobiLpSolver<ValueType>::getObjectiveValue(uint64_t const&) const {
+template<typename ValueType, bool RawMode>
+ValueType GurobiLpSolver<ValueType, RawMode>::getObjectiveValue(uint64_t) const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of storm with Gurobi support.";
 }
 
-template<typename ValueType>
-void GurobiLpSolver<ValueType>::setMaximalMILPGap(ValueType const&, bool) {
+template<typename ValueType, bool RawMode>
+void GurobiLpSolver<ValueType, RawMode>::setMaximalMILPGap(ValueType const&, bool) {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of storm with Gurobi support.";
 }
 
-template<typename ValueType>
-ValueType GurobiLpSolver<ValueType>::getMILPGap(bool) const {
+template<typename ValueType, bool RawMode>
+ValueType GurobiLpSolver<ValueType, RawMode>::getMILPGap(bool) const {
     throw storm::exceptions::NotImplementedException() << "This version of storm was compiled without support for Gurobi. Yet, a method was called that "
                                                           "requires this support. Please choose a version of storm with Gurobi support.";
 }
 
 #endif
-template class GurobiLpSolver<double>;
-template class GurobiLpSolver<storm::RationalNumber>;
+
+std::string toString(GurobiSolverMethod const& method) {
+    switch (method) {
+        case GurobiSolverMethod::AUTOMATIC:
+            return "auto";
+        case GurobiSolverMethod::PRIMALSIMPLEX:
+            return "primal-simplex";
+        case GurobiSolverMethod::DUALSIMPLEX:
+            return "dual-simplex";
+        case GurobiSolverMethod::BARRIER:
+            return "barrier";
+        case GurobiSolverMethod::CONCURRENT:
+            return "concurrent";
+        case GurobiSolverMethod::DETCONCURRENT:
+            return "deterministic-concurrent";
+        case GurobiSolverMethod::DETCONCURRENTSIMPLEX:
+            return "deterministic-concurrent-simplex";
+    }
+    STORM_LOG_THROW(false, storm::exceptions::InvalidArgumentException, "Unknown solver method");
+}
+
+std::optional<GurobiSolverMethod> gurobiSolverMethodFromString(std::string const& method) {
+    for (auto const& mt : getGurobiSolverMethods()) {
+        if (toString(mt) == method) {
+            return mt;
+        }
+    }
+    return {};
+}
+
+std::vector<GurobiSolverMethod> getGurobiSolverMethods() {
+    return {GurobiSolverMethod::AUTOMATIC,  GurobiSolverMethod::PRIMALSIMPLEX, GurobiSolverMethod::DUALSIMPLEX,         GurobiSolverMethod::BARRIER,
+            GurobiSolverMethod::CONCURRENT, GurobiSolverMethod::DETCONCURRENT, GurobiSolverMethod::DETCONCURRENTSIMPLEX};
+}
+
+template class GurobiLpSolver<double, true>;
+template class GurobiLpSolver<double, false>;
+template class GurobiLpSolver<storm::RationalNumber, true>;
+template class GurobiLpSolver<storm::RationalNumber, false>;
 }  // namespace solver
 }  // namespace storm
