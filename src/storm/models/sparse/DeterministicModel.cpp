@@ -1,5 +1,7 @@
 #include "storm/models/sparse/DeterministicModel.h"
 
+#include "storm/settings/SettingsManager.h"
+#include "storm/settings/modules/CoreSettings.h"
 #include "storage/StronglyConnectedComponentDecomposition.h"
 #include "storm/adapters/RationalFunctionAdapter.h"
 #include "storm/io/export.h"
@@ -67,57 +69,60 @@ void DeterministicModel<ValueType, RewardModelType>::printModelInformationToStre
     this->printModelInformationHeaderToStream(out);
     this->printModelInformationFooterToStream(out);
 
-    // TODO h: remove this (only used for EVTs benchmarking)
-    // Compute information about the model's topology:
-    // Create auxiliary data and lambdas
-    storm::storage::BitVector sccAsBitVector(this->getNumberOfStates(), false);
-    auto isLeavingTransition = [&sccAsBitVector](auto const& e) {return !sccAsBitVector.get(e.getColumn());};
-    auto isExitState = [this, &isLeavingTransition](uint64_t state) {
-        auto row = this->getTransitionMatrix().getRow(state);
-        return std::any_of(row.begin(), row.end(), isLeavingTransition);
-    };
+    // TODO (only used for EVTs and steady state benchmarking), move to model-handling.h?
+    if (storm::settings::getModule<storm::settings::modules::CoreSettings>().isShowStatisticsSet()) {
+        // Compute information about the model's topology:
+        // Create auxiliary data and lambdas
+        storm::storage::BitVector sccAsBitVector(this->getNumberOfStates(), false);
+        auto isLeavingTransition = [&sccAsBitVector](auto const &e) { return !sccAsBitVector.get(e.getColumn()); };
+        auto isExitState = [this, &isLeavingTransition](uint64_t state) {
+            auto row = this->getTransitionMatrix().getRow(state);
+            return std::any_of(row.begin(), row.end(), isLeavingTransition);
+        };
 
-    auto options = storm::storage::StronglyConnectedComponentDecompositionOptions().forceTopologicalSort().computeSccDepths(true);
-    auto sccDecomposition = storm::storage::StronglyConnectedComponentDecomposition<ValueType>(this->getTransitionMatrix(), options);
+        auto options = storm::storage::StronglyConnectedComponentDecompositionOptions().forceTopologicalSort().computeSccDepths(
+                true);
+        auto sccDecomposition = storm::storage::StronglyConnectedComponentDecomposition<ValueType>(
+                this->getTransitionMatrix(), options);
 
-    storm::storage::BitVector nonBsccStates = storm::storage::BitVector(this->getNumberOfStates(), false);
-    uint64_t numSccs = 0;
-    uint64_t maxSccSize = 0;
-    bool acyclic = true;
-    for (auto const& scc : sccDecomposition) {
-        sccAsBitVector.set(scc.begin(), scc.end(), true);
-        if (std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)) {
-            // This is not a BSCC, mark the states correspondingly.
-            nonBsccStates = nonBsccStates | sccAsBitVector;
-            // Increase counter for number of non-bottom SCCs
-            numSccs ++;
-            // Update the maximal number of states in one SCC
-            uint64_t sccSize = sccAsBitVector.getNumberOfSetBits();
-            maxSccSize = std::max(maxSccSize, sccSize);
-            if (sccSize >1) { // consider models with SCCs > 1 as acyclic
-                acyclic = false;
+        storm::storage::BitVector nonBsccStates = storm::storage::BitVector(this->getNumberOfStates(), false);
+        uint64_t numSccs = 0;
+        uint64_t maxSccSize = 0;
+        bool acyclic = true;
+        for (auto const &scc: sccDecomposition) {
+            sccAsBitVector.set(scc.begin(), scc.end(), true);
+            if (std::any_of(sccAsBitVector.begin(), sccAsBitVector.end(), isExitState)) {
+                // This is not a BSCC, mark the states correspondingly.
+                nonBsccStates = nonBsccStates | sccAsBitVector;
+                // Increase counter for number of non-bottom SCCs
+                numSccs++;
+                // Update the maximal number of states in one SCC
+                uint64_t sccSize = sccAsBitVector.getNumberOfSetBits();
+                maxSccSize = std::max(maxSccSize, sccSize);
+                if (sccSize > 1) { // consider models with SCCs > 1 as acyclic
+                    acyclic = false;
+                }
             }
+            sccAsBitVector.clear();
         }
-        sccAsBitVector.clear();
+
+        out << "# Topology of the input model without BSCCs (acyclic = only non-bottom SCCs of size 1): ";
+        if (acyclic) {
+            out << "acyclic\n";
+        } else {
+            out << "cyclic\n";
+        }
+
+        out << "# Number of non-BSCC states: " << (nonBsccStates.getNumberOfSetBits()) << '\n';
+
+        out << "# Number of non-bottom SCCs: " << numSccs << '\n';
+        out << "# Size of largest non-bottom SCC: " << maxSccSize << " states\n";
+
+
+        out << "# Length of max SCC chain: " << sccDecomposition.getMaxSccDepth() << '\n';
+
+        out << "-------------------------------------------------------------- \n";
     }
-
-    out << "# Topology of the input model without BSCCs (acyclic = only non-bottom SCCs of size 1): ";
-    if (acyclic) {
-        out << "acyclic\n";
-    }
-    else {
-        out << "cyclic\n";
-    }
-
-    out << "# Number of non-BSCC states: " << (nonBsccStates.getNumberOfSetBits()) << '\n';
-
-    out << "# Number of non-bottom SCCs: " << numSccs << '\n';
-    out << "# Size of largest non-bottom SCC: " << maxSccSize << " states\n";
-
-
-    out << "# Length of max SCC chain: " << sccDecomposition.getMaxSccDepth() << '\n';
-
-    out << "-------------------------------------------------------------- \n";
 
 }
 
